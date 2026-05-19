@@ -450,7 +450,7 @@ function renderProjectList() {
       <button class="btn btn-primary" style="flex:1;width:auto" data-action="new-session-for-folder" data-cid="${clientId}">⏺ 新規収録</button>
       <button class="btn btn-secondary" style="flex:1;width:auto" data-action="add-project" data-cid="${clientId}">＋ フォルダ</button>
     </div>
-    <div class="section-label">フォルダ一覧</div>
+    <div class="section-label">フォルダ</div>
     ${listHtml}
   </div>`;
 }
@@ -741,11 +741,11 @@ function renderSessionReview() {
     ${logsHtml}
 
     <div style="padding:0 16px 16px;display:flex;flex-direction:column;gap:10px">
-      ${clientId === '__inbox__' ? `
       <button class="btn btn-secondary" style="color:var(--primary);border:1px solid var(--primary)"
-        data-action="move-to-folder" data-sid="${sessionId}">
+        data-action="move-to-folder"
+        data-sid="${sessionId}" data-src-cid="${clientId}" data-src-pid="${projectId}">
         📁 フォルダに移動
-      </button>` : ''}
+      </button>
       <button class="btn btn-secondary" data-action="add-missed-log"
         data-cid="${clientId}" data-pid="${projectId}" data-sid="${sessionId}">
         入力し忘れを追加
@@ -1636,27 +1636,44 @@ function handleAction(action, el) {
     // フォルダに移動シートを開く
     case 'move-to-folder': {
       const moveSid = el.dataset.sid;
+      const srcCid = el.dataset.srcCid;
+      const srcPid = el.dataset.srcPid;
       const folders = getFolders();
+      // 移動先候補：現在の案件を除外（inbox含む全フォルダ）
+      const allDests = [
+        // 未分類（inbox）を先頭に
+        ...(srcCid !== '__inbox__' ? [{
+          fId: '__inbox__', fName: '未分類', pId: '__inbox__', pName: '未分類'
+        }] : []),
+        // 通常フォルダ
+        ...folders.flatMap(f => f.projects
+          .filter(p => !(f.id === srcCid && p.id === srcPid))
+          .map(p => ({ fId: f.id, fName: f.name, pId: p.id, pName: p.name }))
+        )
+      ];
       let optionsHtml = '';
-      if (folders.length === 0) {
-        optionsHtml = `<p style="color:var(--text2);font-size:14px;padding:8px 0 16px">フォルダがありません。先にフォルダと案件を作成してください。</p>`;
+      if (allDests.length === 0) {
+        optionsHtml = `<p style="color:var(--text2);font-size:14px;padding:8px 0 16px">移動先がありません。新しいフォルダを作成してください。</p>`;
       } else {
-        const rows = folders.flatMap(f => f.projects.map(p =>
+        const rows = allDests.map(d =>
           `<button class="list-item" style="border-radius:var(--r-sm)"
-            data-action="confirm-move-to-folder" data-cid="${f.id}" data-pid="${p.id}" data-sid="${moveSid}">
-            <span class="list-item-icon" style="color:var(--text2)">${icon('folder', 22)}</span>
+            data-action="confirm-move-to-folder"
+            data-cid="${d.fId}" data-pid="${d.pId}" data-sid="${moveSid}"
+            data-src-cid="${srcCid}" data-src-pid="${srcPid}">
+            <span class="list-item-icon" style="color:var(--text2)">${icon(d.fId === '__inbox__' ? 'file' : 'folder', 22)}</span>
             <span class="list-item-body">
-              <span class="list-item-title">${esc(f.name)}</span>
-              <span class="list-item-sub">${esc(p.name)}</span>
+              <span class="list-item-title">${esc(d.fName)}</span>
+              ${d.fId !== '__inbox__' ? `<span class="list-item-sub">${esc(d.pName)}</span>` : ''}
             </span>
           </button>`
-        )).join('');
+        ).join('');
         optionsHtml = `<div class="list-group" style="margin:0 0 12px">${rows}</div>`;
       }
       openSheet(`
         <div class="sheet-title">📁 フォルダに移動</div>
         ${optionsHtml}
-        <button class="btn btn-secondary" data-action="create-folder-and-move" data-sid="${moveSid}">
+        <button class="btn btn-secondary" data-action="create-folder-and-move"
+          data-sid="${moveSid}" data-src-cid="${srcCid}" data-src-pid="${srcPid}">
           ＋ 新しいフォルダを作成して移動
         </button>
       `);
@@ -1666,11 +1683,16 @@ function handleAction(action, el) {
     // 既存フォルダ・案件に移動を確定
     case 'confirm-move-to-folder': {
       const { cid: tCid, pid: tPid, sid: tSid } = el.dataset;
-      const inboxProject = getInboxProject();
-      const idx = inboxProject.sessions.findIndex(s => s.id === tSid);
+      const srcCid2 = el.dataset.srcCid;
+      const srcPid2 = el.dataset.srcPid;
+      // 移動元を動的に特定（inboxでも通常フォルダでも対応）
+      const srcProject = srcCid2 === '__inbox__' ? getInboxProject() : getProject(srcCid2, srcPid2);
+      if (!srcProject) return;
+      const idx = srcProject.sessions.findIndex(s => s.id === tSid);
       if (idx === -1) return;
-      const [movedSession] = inboxProject.sessions.splice(idx, 1);
-      const targetProject = getProject(tCid, tPid);
+      const [movedSession] = srcProject.sessions.splice(idx, 1);
+      // 移動先
+      const targetProject = tCid === '__inbox__' ? getInboxProject() : getProject(tCid, tPid);
       if (!targetProject) return;
       targetProject.sessions.push(movedSession);
       saveData();
@@ -1689,6 +1711,8 @@ function handleAction(action, el) {
     // 新しいフォルダを作成して移動
     case 'create-folder-and-move': {
       const cfSid = el.dataset.sid;
+      const cfSrcCid = el.dataset.srcCid;
+      const cfSrcPid = el.dataset.srcPid;
       openSheet(`
         <div class="sheet-title">📁 新しいフォルダに移動</div>
         <div class="form-group">
@@ -1699,13 +1723,16 @@ function handleAction(action, el) {
           <label class="form-label">案件名 <span style="font-weight:400;color:var(--text3);text-transform:none;letter-spacing:0">（任意）</span></label>
           <input class="form-input" type="text" id="new-project-name2" placeholder="例：案件名など（省略可）">
         </div>
-        <button class="btn btn-primary" data-action="save-folder-and-move" data-sid="${cfSid}">作成して移動</button>
+        <button class="btn btn-primary" data-action="save-folder-and-move"
+          data-sid="${cfSid}" data-src-cid="${cfSrcCid}" data-src-pid="${cfSrcPid}">作成して移動</button>
       `);
       break;
     }
 
     case 'save-folder-and-move': {
       const sfSid = el.dataset.sid;
+      const sfSrcCid = el.dataset.srcCid;
+      const sfSrcPid = el.dataset.srcPid;
       const folderName = document.getElementById('new-folder-name')?.value.trim();
       const projectName = document.getElementById('new-project-name2')?.value.trim() || folderName;
       if (!folderName) { showToast('フォルダ名を入力してください'); return; }
@@ -1714,10 +1741,12 @@ function handleAction(action, el) {
         projects: [{ id: uid(), name: projectName, createdAt: new Date().toISOString(), sessions: [] }] };
       appData.clients.push(newFolder);
 
-      const inboxProject = getInboxProject();
-      const idx = inboxProject.sessions.findIndex(s => s.id === sfSid);
+      // 移動元を動的に特定
+      const sfSrcProject = sfSrcCid === '__inbox__' ? getInboxProject() : getProject(sfSrcCid, sfSrcPid);
+      if (!sfSrcProject) return;
+      const idx = sfSrcProject.sessions.findIndex(s => s.id === sfSid);
       if (idx === -1) return;
-      const [movedSession] = inboxProject.sessions.splice(idx, 1);
+      const [movedSession] = sfSrcProject.sessions.splice(idx, 1);
       newFolder.projects[0].sessions.push(movedSession);
       saveData();
       closeSheet();
