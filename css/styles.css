@@ -485,6 +485,7 @@ textarea.form-input {
   border-radius: var(--r);
   margin: 0 16px 16px;
   padding: 16px;
+  overflow: hidden;
 }
 .setup-section-title {
   font-size: 13px;
@@ -1013,3 +1014,9 @@ textarea.form-input {
 input[type=number]::-webkit-inner-spin-button,
 input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; }
 input[type=number] { -moz-appearance: textfield; }
+
+/* date input iOS fix */
+input[type=date].form-input {
+  -webkit-appearance: none;
+  max-width: 100%;
+}
