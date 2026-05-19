@@ -1435,12 +1435,15 @@ function handleAction(action, el) {
       if (row) {
         const subs = TROUBLE_CATEGORIES[cat]?.subs || [];
         if (subs.length > 0) {
+          row.className = 'sub-category-row';
           row.innerHTML = subs.map(s =>
             `<button class="sub-cat-btn" data-action="select-trouble-sub" data-sub="${s}">${s}</button>`
           ).join('');
         } else if (cat === 'equipment') {
+          row.className = 'sub-category-row';
           row.innerHTML = `<input class="form-input" type="text" id="f-equipment-detail" placeholder="機材の詳細">`;
         } else {
+          row.className = '';
           row.innerHTML = '';
         }
       }
