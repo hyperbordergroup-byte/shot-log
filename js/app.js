@@ -447,7 +447,7 @@ function renderProjectList() {
   </div>
   <div class="content">
     <div style="padding:16px 16px 8px;display:flex;gap:10px">
-      <button class="btn btn-primary" style="flex:1;width:auto" data-action="new-session-for-folder" data-cid="${clientId}">⏺ 新規収録</button>
+      <button class="btn btn-primary" style="flex:1;width:auto" data-action="new-session-for-folder" data-cid="${clientId}">新規収録</button>
       <button class="btn btn-secondary" style="flex:1;width:auto" data-action="add-project" data-cid="${clientId}">＋ フォルダ</button>
     </div>
     <div class="section-label">フォルダ</div>
@@ -499,7 +499,7 @@ function renderSessionList() {
   <div class="content">
     <div style="padding:16px 16px 8px;display:flex;gap:10px">
       <button class="btn btn-primary" style="flex:1;width:auto" data-action="new-session"
-        data-cid="${clientId}" data-pid="${projectId}">⏺ 新規収録</button>
+        data-cid="${clientId}" data-pid="${projectId}">新規収録</button>
       <button class="btn btn-secondary" style="flex:1;width:auto" data-action="add-project" data-cid="${clientId}">＋ フォルダ</button>
     </div>
     <div class="section-label">収録一覧</div>
@@ -1895,11 +1895,11 @@ function handleAction(action, el) {
     case 'session-options': {
       const session = getSession(cid, pid, sid);
       if (!session) return;
-      const isInboxSession = cid === '__inbox__';
       openSheet(`
         <div class="sheet-title">第${session.number}回収録</div>
         <div style="display:flex;flex-direction:column;gap:10px">
-          ${isInboxSession ? `<button class="btn btn-secondary" data-action="move-to-folder" data-sid="${sid}">📁 フォルダに移動</button>` : ''}
+          <button class="btn btn-secondary" data-action="move-to-folder"
+            data-sid="${sid}" data-src-cid="${cid}" data-src-pid="${pid}">📁 フォルダに移動</button>
           <button class="btn btn-secondary" style="color:var(--danger)" data-action="delete-session" data-cid="${cid}" data-pid="${pid}" data-sid="${sid}">削除</button>
         </div>
       `);
