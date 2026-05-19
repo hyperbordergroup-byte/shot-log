@@ -574,7 +574,7 @@ function renderSessionSetup() {
       </div>
     </div>
 
-    <div style="padding:0 0 32px">
+    <div style="margin:0 16px 32px">
       <button class="btn btn-rec" data-action="start-recording"
         data-cid="${isInbox ? '__inbox__' : clientId}" data-pid="${isInbox ? '__inbox__' : projectId}">
         REC 開始
@@ -1696,8 +1696,8 @@ function handleAction(action, el) {
           <input class="form-input" type="text" id="new-folder-name" placeholder="例：企業名など">
         </div>
         <div class="form-group">
-          <label class="form-label">案件名</label>
-          <input class="form-input" type="text" id="new-project-name2" placeholder="例：案件名など">
+          <label class="form-label">案件名 <span style="font-weight:400;color:var(--text3);text-transform:none;letter-spacing:0">（任意）</span></label>
+          <input class="form-input" type="text" id="new-project-name2" placeholder="例：案件名など（省略可）">
         </div>
         <button class="btn btn-primary" data-action="save-folder-and-move" data-sid="${cfSid}">作成して移動</button>
       `);
@@ -1707,9 +1707,8 @@ function handleAction(action, el) {
     case 'save-folder-and-move': {
       const sfSid = el.dataset.sid;
       const folderName = document.getElementById('new-folder-name')?.value.trim();
-      const projectName = document.getElementById('new-project-name2')?.value.trim();
+      const projectName = document.getElementById('new-project-name2')?.value.trim() || folderName;
       if (!folderName) { showToast('フォルダ名を入力してください'); return; }
-      if (!projectName) { showToast('案件名を入力してください'); return; }
 
       const newFolder = { id: uid(), name: folderName, createdAt: new Date().toISOString(),
         projects: [{ id: uid(), name: projectName, createdAt: new Date().toISOString(), sessions: [] }] };
