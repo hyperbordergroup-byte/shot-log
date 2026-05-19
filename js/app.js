@@ -4,17 +4,41 @@
 // CONSTANTS
 // ============================================================
 const LOG_TYPES = {
-  video:   { label: '動画',     emoji: '🎬', color: 'var(--c-video)' },
-  work:    { label: 'ワーク',   emoji: '💬', color: 'var(--c-work)' },
-  break:   { label: '休憩',     emoji: '☕', color: 'var(--c-break)' },
-  talk:    { label: 'トーク',   emoji: '🎤', color: 'var(--c-talk)' },
-  trouble: { label: 'トラブル', emoji: '⚠️', color: 'var(--c-trouble)' },
-  other:   { label: 'その他',   emoji: '📋', color: 'var(--c-other)' },
-  missed:  { label: '入力し忘れ', emoji: '⏰', color: 'var(--c-missed)' },
+  video:   { label: '動画',       icon: 'video',         color: 'var(--c-video)' },
+  work:    { label: 'ワーク',     icon: 'message',       color: 'var(--c-work)' },
+  break:   { label: '休憩',       icon: 'coffee',        color: 'var(--c-break)' },
+  talk:    { label: 'トーク',     icon: 'mic',           color: 'var(--c-talk)' },
+  trouble: { label: 'トラブル',   icon: 'alertTriangle', color: 'var(--c-trouble)' },
+  other:   { label: 'その他',     icon: 'list',          color: 'var(--c-other)' },
+  missed:  { label: '入力し忘れ', icon: 'clock',         color: 'var(--c-missed)' },
 };
 
 const DURATION_PRESETS_LONG = [30,60,90,120,150,180,210,240,270,300,600,900,1200,1800,2700,3600];
 const DURATION_PRESETS_BREAK = [300,600,900,1800];
+
+// ============================================================
+// ICON HELPER
+// ============================================================
+function icon(name, size = 24) {
+  const paths = {
+    video:         `<polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>`,
+    message:       `<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>`,
+    coffee:        `<path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/>`,
+    mic:           `<path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>`,
+    alertTriangle: `<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>`,
+    list:          `<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>`,
+    clock:         `<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>`,
+    folder:        `<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>`,
+    file:          `<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>`,
+    chevronRight:  `<polyline points="9 18 15 12 9 6"/>`,
+    chevronLeft:   `<polyline points="15 18 9 12 15 6"/>`,
+    film:          `<rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/>`,
+    record:        `<circle cx="12" cy="12" r="10"/>`,
+    stop:          `<rect x="3" y="3" width="18" height="18" rx="2"/>`,
+  };
+  const isFilled = ['record','stop'].includes(name);
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="${isFilled ? 'currentColor' : 'none'}" stroke="${isFilled ? 'none' : 'currentColor'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle">${paths[name] || ''}</svg>`;
+}
 
 const TROUBLE_CATEGORIES = {
   audio:      { label: '音声',     subs: ['ノイズ','干渉','ハウリング','音割れ','無音'] },
@@ -331,7 +355,7 @@ function renderHome() {
       const isRec = s.status === 'recording';
       const sum = sessionSummary(s);
       return `<button class="list-item" data-action="open-inbox-session" data-sid="${s.id}">
-        <span class="list-item-icon">${isRec ? '🔴' : '📄'}</span>
+        <span class="list-item-icon" style="color:${isRec ? 'var(--danger)' : 'var(--text2)'}">${isRec ? icon('record', 16) : icon('file', 22)}</span>
         <span class="list-item-body">
           <span class="list-item-title">第${s.number}回収録${isRec ? ' <span style="color:var(--danger);font-size:12px">REC中</span>' : ''}</span>
           <span class="list-item-sub">${s.date}・${s.logs.length}件 動画${sum.videoCount}本</span>
@@ -346,7 +370,7 @@ function renderHome() {
   let foldersHtml = '';
   if (folders.length === 0 && inboxSessions.length === 0) {
     foldersHtml = `<div class="empty-state">
-      <div class="empty-state-icon">📁</div>
+      <div class="empty-state-icon" style="opacity:0.4">${icon('folder', 48)}</div>
       <div class="empty-state-text">上のボタンで収録を開始するか<br>フォルダを作成してください</div>
     </div>`;
   } else if (folders.length > 0) {
@@ -354,7 +378,7 @@ function renderHome() {
       folders.map(c => {
         const pCount = c.projects.length;
         return `<button class="list-item" data-action="open-client" data-id="${c.id}">
-          <span class="list-item-icon">📁</span>
+          <span class="list-item-icon" style="color:var(--text2)">${icon('folder', 22)}</span>
           <span class="list-item-body">
             <span class="list-item-title">${esc(c.name)}</span>
             <span class="list-item-sub">案件 ${pCount}件</span>
@@ -369,7 +393,7 @@ function renderHome() {
   </div>
   <div class="content">
     <div style="padding:16px 16px 8px;display:flex;gap:10px">
-      <button class="btn btn-primary" style="flex:1;width:auto" data-action="new-quick-session">⏺ 新規収録</button>
+      <button class="btn btn-primary" style="flex:1;width:auto" data-action="new-quick-session">新規収録</button>
       <button class="btn btn-secondary" style="flex:1;width:auto" data-action="add-client">＋ フォルダ</button>
     </div>
     ${inboxHtml}
@@ -389,15 +413,15 @@ function renderProjectList() {
   let listHtml = '';
   if (projects.length === 0) {
     listHtml = `<div class="empty-state">
-      <div class="empty-state-icon">📂</div>
-      <div class="empty-state-text">案件がありません<br>右上の「＋」から追加してください</div>
+      <div class="empty-state-icon" style="opacity:0.4">${icon('folder', 48)}</div>
+      <div class="empty-state-text">フォルダがありません<br>上のボタンから追加してください</div>
     </div>`;
   } else {
     listHtml = `<div class="list-group">` +
       projects.map(p => {
         const sCount = p.sessions.length;
         return `<button class="list-item" data-action="open-project" data-cid="${clientId}" data-pid="${p.id}">
-          <span class="list-item-icon">📂</span>
+          <span class="list-item-icon" style="color:var(--text2)">${icon('folder', 22)}</span>
           <span class="list-item-body">
             <span class="list-item-title">${esc(p.name)}</span>
             <span class="list-item-sub">収録 ${sCount}回</span>
@@ -415,9 +439,9 @@ function renderProjectList() {
   <div class="content">
     <div style="padding:16px 16px 8px;display:flex;gap:10px">
       <button class="btn btn-primary" style="flex:1;width:auto" data-action="new-session-for-folder" data-cid="${clientId}">⏺ 新規収録</button>
-      <button class="btn btn-secondary" style="flex:1;width:auto" data-action="add-project" data-cid="${clientId}">＋ 案件</button>
+      <button class="btn btn-secondary" style="flex:1;width:auto" data-action="add-project" data-cid="${clientId}">＋ フォルダ</button>
     </div>
-    <div class="section-label">案件一覧</div>
+    <div class="section-label">フォルダ一覧</div>
     ${listHtml}
   </div>`;
 }
@@ -434,8 +458,8 @@ function renderSessionList() {
   let listHtml = '';
   if (sessions.length === 0) {
     listHtml = `<div class="empty-state">
-      <div class="empty-state-icon">🎬</div>
-      <div class="empty-state-text">収録記録がありません<br>右上から新しい収録を開始してください</div>
+      <div class="empty-state-icon" style="opacity:0.4">${icon('film', 48)}</div>
+      <div class="empty-state-text">収録記録がありません<br>上のボタンから新しい収録を開始してください</div>
     </div>`;
   } else {
     listHtml = `<div class="list-group">` +
@@ -444,7 +468,7 @@ function renderSessionList() {
         const summary = sessionSummary(s);
         return `<button class="list-item" data-action="open-session"
             data-cid="${clientId}" data-pid="${projectId}" data-sid="${s.id}">
-          <span class="list-item-icon">${isRec ? '🔴' : '📄'}</span>
+          <span class="list-item-icon" style="color:${isRec ? 'var(--danger)' : 'var(--text2)'}">${isRec ? icon('record', 16) : icon('file', 22)}</span>
           <span class="list-item-body">
             <span class="list-item-title">第${s.number}回収録${isRec ? ' <span style="color:var(--danger);font-size:12px">REC中</span>' : ''}</span>
             <span class="list-item-sub">${s.date}・${s.logs.length}件 動画${summary.videoCount}本</span>
@@ -464,7 +488,7 @@ function renderSessionList() {
     <div style="padding:16px 16px 8px;display:flex;gap:10px">
       <button class="btn btn-primary" style="flex:1;width:auto" data-action="new-session"
         data-cid="${clientId}" data-pid="${projectId}">⏺ 新規収録</button>
-      <button class="btn btn-secondary" style="flex:1;width:auto" data-action="add-project" data-cid="${clientId}">＋ 案件</button>
+      <button class="btn btn-secondary" style="flex:1;width:auto" data-action="add-project" data-cid="${clientId}">＋ フォルダ</button>
     </div>
     <div class="section-label">収録一覧</div>
     ${listHtml}
@@ -541,7 +565,7 @@ function renderSessionSetup() {
     <div style="padding:0 0 32px">
       <button class="btn btn-primary" data-action="start-recording"
         data-cid="${isInbox ? '__inbox__' : clientId}" data-pid="${isInbox ? '__inbox__' : projectId}">
-        ⏺ REC スタート
+        REC スタート
       </button>
     </div>
   </div>`;
@@ -559,7 +583,6 @@ function renderRecording() {
   const logs = session.logs;
   const logListHtml = logs.length === 0
     ? `<div class="empty-state" style="padding:32px 16px">
-        <div class="empty-state-icon">👇</div>
         <div class="empty-state-text">下のボタンをタップして記録を開始</div>
        </div>`
     : logs.map(l => renderLogRow(l, session)).join('');
@@ -573,7 +596,7 @@ function renderRecording() {
         <div class="rec-header-sub">${session.date}</div>
       </div>
       <button class="stop-btn" data-action="stop-recording"
-        data-cid="${clientId}" data-pid="${projectId}" data-sid="${sessionId}">■ STOP</button>
+        data-cid="${clientId}" data-pid="${projectId}" data-sid="${sessionId}">${icon('stop', 12)} STOP</button>
     </div>
 
     <div class="timer-area">
@@ -589,32 +612,32 @@ function renderRecording() {
     <div class="rec-buttons">
       <button class="rec-btn" data-type="video" data-action="tap-log"
         data-cid="${clientId}" data-pid="${projectId}" data-sid="${sessionId}">
-        <span class="rec-btn-emoji">🎬</span>
+        <span class="rec-btn-emoji">${icon('video', 26)}</span>
         <span class="rec-btn-label">動画</span>
       </button>
       <button class="rec-btn" data-type="work" data-action="tap-log"
         data-cid="${clientId}" data-pid="${projectId}" data-sid="${sessionId}">
-        <span class="rec-btn-emoji">💬</span>
+        <span class="rec-btn-emoji">${icon('message', 26)}</span>
         <span class="rec-btn-label">ワーク</span>
       </button>
       <button class="rec-btn" data-type="break" data-action="tap-log"
         data-cid="${clientId}" data-pid="${projectId}" data-sid="${sessionId}">
-        <span class="rec-btn-emoji">☕</span>
+        <span class="rec-btn-emoji">${icon('coffee', 26)}</span>
         <span class="rec-btn-label">休憩</span>
       </button>
       <button class="rec-btn" data-type="talk" data-action="tap-log"
         data-cid="${clientId}" data-pid="${projectId}" data-sid="${sessionId}">
-        <span class="rec-btn-emoji">🎤</span>
+        <span class="rec-btn-emoji">${icon('mic', 26)}</span>
         <span class="rec-btn-label">トーク</span>
       </button>
       <button class="rec-btn" data-type="trouble" data-action="tap-log"
         data-cid="${clientId}" data-pid="${projectId}" data-sid="${sessionId}">
-        <span class="rec-btn-emoji">⚠️</span>
+        <span class="rec-btn-emoji">${icon('alertTriangle', 26)}</span>
         <span class="rec-btn-label">トラブル</span>
       </button>
       <button class="rec-btn" data-type="other" data-action="tap-log"
         data-cid="${clientId}" data-pid="${projectId}" data-sid="${sessionId}">
-        <span class="rec-btn-emoji">📋</span>
+        <span class="rec-btn-emoji">${icon('list', 26)}</span>
         <span class="rec-btn-label">その他</span>
       </button>
     </div>
@@ -713,7 +736,7 @@ function renderSessionReview() {
       </button>` : ''}
       <button class="btn btn-secondary" data-action="add-missed-log"
         data-cid="${clientId}" data-pid="${projectId}" data-sid="${sessionId}">
-        ⏰ 入力し忘れを追加
+        入力し忘れを追加
       </button>
       <button class="btn btn-secondary btn-sm" data-action="edit-offset"
         data-cid="${clientId}" data-pid="${projectId}" data-sid="${sessionId}"
@@ -742,7 +765,7 @@ function renderReviewEntry(log, session, clientId, projectId) {
     </div>
     <div class="review-log-body">
       <div class="review-log-type">
-        <span>${t.emoji}</span>
+        <span style="color:${t.color}">${icon(t.icon, 18)}</span>
         <span style="color:${t.color}">${typeLabel}</span>
         ${log.isMissed ? '<span class="missed-flag">※忘れ</span>' : ''}
       </div>
@@ -880,7 +903,7 @@ function openLogForm(type, session, editLog = null, tapContext = null) {
   const presets = type === 'break' ? DURATION_PRESETS_BREAK : DURATION_PRESETS_LONG;
   const t = LOG_TYPES[type] || LOG_TYPES.other;
   const isEdit = !!editLog;
-  const title = isEdit ? `${t.emoji} ${t.label}を編集` : `${t.emoji} ${t.label}を記録`;
+  const title = isEdit ? `${t.label}を編集` : `${t.label}を記録`;
 
   let durationHtml = '';
   if (type !== 'talk' && type !== 'trouble') {
@@ -1017,11 +1040,11 @@ function openMissedForm(session) {
   const typeBtns = Object.entries(LOG_TYPES)
     .filter(([k]) => k !== 'missed')
     .map(([k, t]) =>
-      `<button class="preset-btn ${formState.selectedType===k?'selected':''}" data-action="missed-type" data-mtype="${k}">${t.emoji} ${t.label}</button>`
+      `<button class="preset-btn ${formState.selectedType===k?'selected':''}" data-action="missed-type" data-mtype="${k}">${t.label}</button>`
     ).join('');
 
   openSheet(`
-    <div class="sheet-title">⏰ 入力し忘れを追加</div>
+    <div class="sheet-title">入力し忘れを追加</div>
 
     <div class="form-group">
       <label class="form-label">大まかな時間</label>
@@ -1154,10 +1177,10 @@ function handleAction(action, el) {
     case 'add-project': {
       const _cid = el.dataset.cid;
       openSheet(`
-        <div class="sheet-title">📂 案件を追加</div>
+        <div class="sheet-title">フォルダを追加</div>
         <div class="form-group">
-          <label class="form-label">案件名</label>
-          <input class="form-input" type="text" id="new-project-name" placeholder="例：案件名など" autofocus>
+          <label class="form-label">フォルダ名</label>
+          <input class="form-input" type="text" id="new-project-name" placeholder="例：フォルダ名など" autofocus>
         </div>
         <button class="btn btn-primary" data-action="save-project" data-cid="${_cid}">追加</button>
       `);
@@ -1167,7 +1190,7 @@ function handleAction(action, el) {
 
     case 'save-project': {
       const name = document.getElementById('new-project-name')?.value.trim();
-      if (!name) { showToast('案件名を入力してください'); return; }
+      if (!name) { showToast('フォルダ名を入力してください'); return; }
       const c = getClient(el.dataset.cid);
       if (!c) return;
       c.projects.push({ id: uid(), name, createdAt: new Date().toISOString(), sessions: [] });
@@ -1563,14 +1586,14 @@ function handleAction(action, el) {
         const rows = projects.map(p =>
           `<button class="list-item" style="border-radius:var(--r-sm)"
             data-action="new-session" data-cid="${cid}" data-pid="${p.id}">
-            <span class="list-item-icon">📂</span>
+            <span class="list-item-icon" style="color:var(--text2)">${icon('folder', 22)}</span>
             <span class="list-item-body">
               <span class="list-item-title">${esc(p.name)}</span>
             </span>
           </button>`
         ).join('');
         openSheet(`
-          <div class="sheet-title">⏺ 収録する案件を選択</div>
+          <div class="sheet-title">収録するフォルダを選択</div>
           <div class="list-group" style="margin:0">${rows}</div>
         `);
       }
@@ -1606,7 +1629,7 @@ function handleAction(action, el) {
         const rows = folders.flatMap(f => f.projects.map(p =>
           `<button class="list-item" style="border-radius:var(--r-sm)"
             data-action="confirm-move-to-folder" data-cid="${f.id}" data-pid="${p.id}" data-sid="${moveSid}">
-            <span class="list-item-icon">📁</span>
+            <span class="list-item-icon" style="color:var(--text2)">${icon('folder', 22)}</span>
             <span class="list-item-body">
               <span class="list-item-title">${esc(f.name)}</span>
               <span class="list-item-sub">${esc(p.name)}</span>

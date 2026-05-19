@@ -677,6 +677,15 @@ textarea.form-input {
 .rec-btn:active { background: var(--surface2); }
 
 .rec-btn-emoji { font-size: 24px; line-height: 1; }
+.rec-btn[data-type="video"]   .rec-btn-emoji { color: var(--c-video); }
+.rec-btn[data-type="work"]    .rec-btn-emoji { color: var(--c-work); }
+.rec-btn[data-type="break"]   .rec-btn-emoji { color: var(--c-break); }
+.rec-btn[data-type="talk"]    .rec-btn-emoji { color: var(--c-talk); }
+.rec-btn[data-type="trouble"] .rec-btn-emoji { color: var(--c-trouble); }
+.rec-btn[data-type="other"]   .rec-btn-emoji { color: var(--c-other); }
+.rec-btn-emoji svg { display: block; }
+.list-item-icon svg { display: block; }
+.empty-state-icon svg { display: block; }
 .rec-btn-label { font-size: 12px; font-weight: 600; }
 
 .rec-btn[data-type="video"]   .rec-btn-label { color: var(--c-video); }
@@ -844,7 +853,9 @@ textarea.form-input {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
 }
 .sub-cat-btn {
   background: var(--surface2);
