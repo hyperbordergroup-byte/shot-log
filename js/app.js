@@ -354,14 +354,17 @@ function renderHome() {
     const rows = inboxSessions.map(s => {
       const isRec = s.status === 'recording';
       const sum = sessionSummary(s);
-      return `<button class="list-item" data-action="open-inbox-session" data-sid="${s.id}">
-        <span class="list-item-icon" style="color:${isRec ? 'var(--danger)' : 'var(--text2)'}">${isRec ? icon('record', 16) : icon('file', 22)}</span>
-        <span class="list-item-body">
-          <span class="list-item-title">第${s.number}回収録${isRec ? ' <span style="color:var(--danger);font-size:12px">REC中</span>' : ''}</span>
-          <span class="list-item-sub">${s.date}・${s.logs.length}件 動画${sum.videoCount}本</span>
-        </span>
-        <span class="list-item-chevron">›</span>
-      </button>`;
+      return `<div class="list-row">
+        <button class="list-item" data-action="open-inbox-session" data-sid="${s.id}">
+          <span class="list-item-icon" style="color:${isRec ? 'var(--danger)' : 'var(--text2)'}">${isRec ? icon('record', 16) : icon('file', 22)}</span>
+          <span class="list-item-body">
+            <span class="list-item-title">第${s.number}回収録${isRec ? ' <span style="color:var(--danger);font-size:12px">REC中</span>' : ''}</span>
+            <span class="list-item-sub">${s.date}・${s.logs.length}件 動画${sum.videoCount}本</span>
+          </span>
+          <span class="list-item-chevron">›</span>
+        </button>
+        <button class="list-item-opts" data-action="session-options" data-cid="__inbox__" data-pid="__inbox__" data-sid="${s.id}">···</button>
+      </div>`;
     }).join('');
     inboxHtml = `<div class="section-label">未分類</div><div class="list-group">${rows}</div>`;
   }
@@ -377,14 +380,17 @@ function renderHome() {
     foldersHtml = `<div class="section-label">フォルダ</div><div class="list-group">` +
       folders.map(c => {
         const pCount = c.projects.length;
-        return `<button class="list-item" data-action="open-client" data-id="${c.id}">
-          <span class="list-item-icon" style="color:var(--text2)">${icon('folder', 22)}</span>
-          <span class="list-item-body">
-            <span class="list-item-title">${esc(c.name)}</span>
-            <span class="list-item-sub">案件 ${pCount}件</span>
-          </span>
-          <span class="list-item-chevron">›</span>
-        </button>`;
+        return `<div class="list-row">
+          <button class="list-item" data-action="open-client" data-id="${c.id}">
+            <span class="list-item-icon" style="color:var(--text2)">${icon('folder', 22)}</span>
+            <span class="list-item-body">
+              <span class="list-item-title">${esc(c.name)}</span>
+              <span class="list-item-sub">フォルダ ${pCount}件</span>
+            </span>
+            <span class="list-item-chevron">›</span>
+          </button>
+          <button class="list-item-opts" data-action="folder-options" data-id="${c.id}">···</button>
+        </div>`;
       }).join('') + `</div>`;
   }
 
@@ -420,14 +426,17 @@ function renderProjectList() {
     listHtml = `<div class="list-group">` +
       projects.map(p => {
         const sCount = p.sessions.length;
-        return `<button class="list-item" data-action="open-project" data-cid="${clientId}" data-pid="${p.id}">
-          <span class="list-item-icon" style="color:var(--text2)">${icon('folder', 22)}</span>
-          <span class="list-item-body">
-            <span class="list-item-title">${esc(p.name)}</span>
-            <span class="list-item-sub">収録 ${sCount}回</span>
-          </span>
-          <span class="list-item-chevron">›</span>
-        </button>`;
+        return `<div class="list-row">
+          <button class="list-item" data-action="open-project" data-cid="${clientId}" data-pid="${p.id}">
+            <span class="list-item-icon" style="color:var(--text2)">${icon('folder', 22)}</span>
+            <span class="list-item-body">
+              <span class="list-item-title">${esc(p.name)}</span>
+              <span class="list-item-sub">収録 ${sCount}回</span>
+            </span>
+            <span class="list-item-chevron">›</span>
+          </button>
+          <button class="list-item-opts" data-action="project-options" data-cid="${clientId}" data-pid="${p.id}">···</button>
+        </div>`;
       }).join('') + `</div>`;
   }
 
@@ -466,15 +475,18 @@ function renderSessionList() {
       sessions.map(s => {
         const isRec = s.status === 'recording';
         const summary = sessionSummary(s);
-        return `<button class="list-item" data-action="open-session"
-            data-cid="${clientId}" data-pid="${projectId}" data-sid="${s.id}">
-          <span class="list-item-icon" style="color:${isRec ? 'var(--danger)' : 'var(--text2)'}">${isRec ? icon('record', 16) : icon('file', 22)}</span>
-          <span class="list-item-body">
-            <span class="list-item-title">第${s.number}回収録${isRec ? ' <span style="color:var(--danger);font-size:12px">REC中</span>' : ''}</span>
-            <span class="list-item-sub">${s.date}・${s.logs.length}件 動画${summary.videoCount}本</span>
-          </span>
-          <span class="list-item-chevron">›</span>
-        </button>`;
+        return `<div class="list-row">
+          <button class="list-item" data-action="open-session"
+              data-cid="${clientId}" data-pid="${projectId}" data-sid="${s.id}">
+            <span class="list-item-icon" style="color:${isRec ? 'var(--danger)' : 'var(--text2)'}">${isRec ? icon('record', 16) : icon('file', 22)}</span>
+            <span class="list-item-body">
+              <span class="list-item-title">第${s.number}回収録${isRec ? ' <span style="color:var(--danger);font-size:12px">REC中</span>' : ''}</span>
+              <span class="list-item-sub">${s.date}・${s.logs.length}件 動画${summary.videoCount}本</span>
+            </span>
+            <span class="list-item-chevron">›</span>
+          </button>
+          <button class="list-item-opts" data-action="session-options" data-cid="${clientId}" data-pid="${projectId}" data-sid="${s.id}">···</button>
+        </div>`;
       }).join('') + `</div>`;
   }
 
@@ -552,7 +564,7 @@ function renderSessionSetup() {
           <option value="1">＋</option>
           <option value="-1">－</option>
         </select>
-        <div class="timecode-input" style="flex:1">
+        <div class="timecode-input timecode-sm" style="flex:1">
           <input type="number" id="off-h" placeholder="00" min="0" max="99">
           <span class="sep">:</span>
           <input type="number" id="off-m" placeholder="00" min="0" max="59">
@@ -563,9 +575,9 @@ function renderSessionSetup() {
     </div>
 
     <div style="padding:0 0 32px">
-      <button class="btn btn-primary" data-action="start-recording"
+      <button class="btn btn-rec" data-action="start-recording"
         data-cid="${isInbox ? '__inbox__' : clientId}" data-pid="${isInbox ? '__inbox__' : projectId}">
-        REC スタート
+        REC 開始
       </button>
     </div>
   </div>`;
@@ -1087,7 +1099,7 @@ function openOffsetEdit(session, clientId, projectId) {
           <option value="1" ${sign===1?'selected':''}>＋</option>
           <option value="-1" ${sign===-1?'selected':''}>－</option>
         </select>
-        <div class="timecode-input" style="flex:1">
+        <div class="timecode-input timecode-sm" style="flex:1">
           <input type="number" id="off-h2" value="${h}" placeholder="00" min="0">
           <span class="sep">:</span>
           <input type="number" id="off-m2" value="${m}" placeholder="00" min="0" max="59">
@@ -1718,6 +1730,168 @@ function handleAction(action, el) {
       ];
       render();
       showToast('フォルダに移動しました');
+      break;
+    }
+
+    // フォルダ options
+    case 'folder-options': {
+      const fid = el.dataset.id;
+      const folder = getClient(fid);
+      if (!folder) return;
+      openSheet(`
+        <div class="sheet-title">${esc(folder.name)}</div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <button class="btn btn-secondary" data-action="rename-folder" data-id="${fid}">名前を変更</button>
+          <button class="btn btn-secondary" style="color:var(--danger)" data-action="delete-folder" data-id="${fid}">削除</button>
+        </div>
+      `);
+      break;
+    }
+
+    case 'rename-folder': {
+      const fid = el.dataset.id;
+      const folder = getClient(fid);
+      if (!folder) return;
+      openSheet(`
+        <div class="sheet-title">フォルダ名を変更</div>
+        <div class="form-group">
+          <label class="form-label">フォルダ名</label>
+          <input class="form-input" type="text" id="rename-folder-input" value="${esc(folder.name)}">
+        </div>
+        <button class="btn btn-primary" data-action="save-rename-folder" data-id="${fid}">保存</button>
+      `);
+      setTimeout(() => {
+        const input = document.getElementById('rename-folder-input');
+        if (input) { input.focus(); input.select(); }
+      }, 300);
+      break;
+    }
+
+    case 'save-rename-folder': {
+      const fid = el.dataset.id;
+      const folder = getClient(fid);
+      if (!folder) return;
+      const name = document.getElementById('rename-folder-input')?.value.trim();
+      if (!name) { showToast('名前を入力してください'); return; }
+      folder.name = name;
+      saveData();
+      closeSheet();
+      render();
+      showToast('名前を変更しました');
+      break;
+    }
+
+    case 'delete-folder': {
+      const fid = el.dataset.id;
+      const folder = getClient(fid);
+      if (!folder) return;
+      showConfirm(
+        `「${folder.name}」を削除しますか？`,
+        '中の案件・収録データもすべて削除されます。',
+        () => {
+          appData.clients = appData.clients.filter(c => c.id !== fid);
+          saveData();
+          closeSheet();
+          render();
+          showToast('削除しました');
+        }
+      );
+      break;
+    }
+
+    // 案件 options
+    case 'project-options': {
+      const project = getProject(cid, pid);
+      if (!project) return;
+      openSheet(`
+        <div class="sheet-title">${esc(project.name)}</div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <button class="btn btn-secondary" data-action="rename-project" data-cid="${cid}" data-pid="${pid}">名前を変更</button>
+          <button class="btn btn-secondary" style="color:var(--danger)" data-action="delete-project" data-cid="${cid}" data-pid="${pid}">削除</button>
+        </div>
+      `);
+      break;
+    }
+
+    case 'rename-project': {
+      const project = getProject(cid, pid);
+      if (!project) return;
+      openSheet(`
+        <div class="sheet-title">フォルダ名を変更</div>
+        <div class="form-group">
+          <label class="form-label">フォルダ名</label>
+          <input class="form-input" type="text" id="rename-project-input" value="${esc(project.name)}">
+        </div>
+        <button class="btn btn-primary" data-action="save-rename-project" data-cid="${cid}" data-pid="${pid}">保存</button>
+      `);
+      setTimeout(() => {
+        const input = document.getElementById('rename-project-input');
+        if (input) { input.focus(); input.select(); }
+      }, 300);
+      break;
+    }
+
+    case 'save-rename-project': {
+      const project = getProject(cid, pid);
+      if (!project) return;
+      const name = document.getElementById('rename-project-input')?.value.trim();
+      if (!name) { showToast('名前を入力してください'); return; }
+      project.name = name;
+      saveData();
+      closeSheet();
+      render();
+      showToast('名前を変更しました');
+      break;
+    }
+
+    case 'delete-project': {
+      const client = getClient(cid);
+      const project = getProject(cid, pid);
+      if (!client || !project) return;
+      showConfirm(
+        `「${project.name}」を削除しますか？`,
+        '中の収録データもすべて削除されます。',
+        () => {
+          client.projects = client.projects.filter(p => p.id !== pid);
+          saveData();
+          closeSheet();
+          render();
+          showToast('削除しました');
+        }
+      );
+      break;
+    }
+
+    // 収録 options
+    case 'session-options': {
+      const session = getSession(cid, pid, sid);
+      if (!session) return;
+      const isInboxSession = cid === '__inbox__';
+      openSheet(`
+        <div class="sheet-title">第${session.number}回収録</div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          ${isInboxSession ? `<button class="btn btn-secondary" data-action="move-to-folder" data-sid="${sid}">📁 フォルダに移動</button>` : ''}
+          <button class="btn btn-secondary" style="color:var(--danger)" data-action="delete-session" data-cid="${cid}" data-pid="${pid}" data-sid="${sid}">削除</button>
+        </div>
+      `);
+      break;
+    }
+
+    case 'delete-session': {
+      const project = getProject(cid, pid);
+      const session = getSession(cid, pid, sid);
+      if (!project || !session) return;
+      showConfirm(
+        `第${session.number}回収録を削除しますか？`,
+        'この収録のすべてのログが削除されます。',
+        () => {
+          project.sessions = project.sessions.filter(s => s.id !== sid);
+          saveData();
+          closeSheet();
+          goBack();
+          showToast('削除しました');
+        }
+      );
       break;
     }
 
