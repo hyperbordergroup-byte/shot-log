@@ -1675,12 +1675,12 @@ function handleAction(action, el) {
       targetProject.sessions.push(movedSession);
       saveData();
       closeSheet();
-      navStack = [
-        { view: 'home' },
-        { view: 'project-list', clientId: tCid },
-        { view: 'session-list', clientId: tCid, projectId: tPid },
-        { view: 'session-review', clientId: tCid, projectId: tPid, sessionId: tSid },
-      ];
+      // スタック深さを変えず現在フレームだけ更新（ページ遷移なし）
+      const d = navStack.length;
+      navStack[d - 1] = { view: 'session-review', clientId: tCid, projectId: tPid, sessionId: tSid };
+      if (d >= 2) navStack[d - 2] = { view: 'session-list', clientId: tCid, projectId: tPid };
+      if (d >= 3) navStack[d - 3] = { view: 'project-list', clientId: tCid };
+      if (d >= 4) navStack[d - 4] = { view: 'home' };
       render();
       showToast('フォルダに移動しました');
       break;
@@ -1721,12 +1721,13 @@ function handleAction(action, el) {
       newFolder.projects[0].sessions.push(movedSession);
       saveData();
       closeSheet();
-      navStack = [
-        { view: 'home' },
-        { view: 'project-list', clientId: newFolder.id },
-        { view: 'session-list', clientId: newFolder.id, projectId: newFolder.projects[0].id },
-        { view: 'session-review', clientId: newFolder.id, projectId: newFolder.projects[0].id, sessionId: sfSid },
-      ];
+      // スタック深さを変えず現在フレームだけ更新（ページ遷移なし）
+      const sfD = navStack.length;
+      const nfCid = newFolder.id, nfPid = newFolder.projects[0].id;
+      navStack[sfD - 1] = { view: 'session-review', clientId: nfCid, projectId: nfPid, sessionId: sfSid };
+      if (sfD >= 2) navStack[sfD - 2] = { view: 'session-list', clientId: nfCid, projectId: nfPid };
+      if (sfD >= 3) navStack[sfD - 3] = { view: 'project-list', clientId: nfCid };
+      if (sfD >= 4) navStack[sfD - 4] = { view: 'home' };
       render();
       showToast('フォルダに移動しました');
       break;
