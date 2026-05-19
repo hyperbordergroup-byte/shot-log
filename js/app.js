@@ -1594,7 +1594,7 @@ function handleAction(action, el) {
       if (!folder) return;
       const projects = folder.projects;
       if (projects.length === 0) {
-        showToast('先に案件を追加してください');
+        showToast('先にフォルダを追加してください');
       } else if (projects.length === 1) {
         navigate({ view: 'session-setup', clientId: cid, projectId: projects[0].id });
       } else {
@@ -1697,12 +1697,20 @@ function handleAction(action, el) {
       targetProject.sessions.push(movedSession);
       saveData();
       closeSheet();
-      // スタック深さを変えず現在フレームだけ更新（ページ遷移なし）
-      const d = navStack.length;
-      navStack[d - 1] = { view: 'session-review', clientId: tCid, projectId: tPid, sessionId: tSid };
-      if (d >= 2) navStack[d - 2] = { view: 'session-list', clientId: tCid, projectId: tPid };
-      if (d >= 3) navStack[d - 3] = { view: 'project-list', clientId: tCid };
-      if (d >= 4) navStack[d - 4] = { view: 'home' };
+      // 移動先に応じてnavStackをクリーンに再構築
+      if (tCid === '__inbox__') {
+        navStack = [
+          { view: 'home' },
+          { view: 'session-review', clientId: '__inbox__', projectId: '__inbox__', sessionId: tSid },
+        ];
+      } else {
+        navStack = [
+          { view: 'home' },
+          { view: 'project-list', clientId: tCid },
+          { view: 'session-list', clientId: tCid, projectId: tPid },
+          { view: 'session-review', clientId: tCid, projectId: tPid, sessionId: tSid },
+        ];
+      }
       render();
       showToast('フォルダに移動しました');
       break;
@@ -1720,8 +1728,8 @@ function handleAction(action, el) {
           <input class="form-input" type="text" id="new-folder-name" placeholder="例：企業名など">
         </div>
         <div class="form-group">
-          <label class="form-label">案件名 <span style="font-weight:400;color:var(--text3);text-transform:none;letter-spacing:0">（任意）</span></label>
-          <input class="form-input" type="text" id="new-project-name2" placeholder="例：案件名など（省略可）">
+          <label class="form-label">フォルダ名（任意）</label>
+          <input class="form-input" type="text" id="new-project-name2" placeholder="例：企画名など（省略可）">
         </div>
         <button class="btn btn-primary" data-action="save-folder-and-move"
           data-sid="${cfSid}" data-src-cid="${cfSrcCid}" data-src-pid="${cfSrcPid}">作成して移動</button>
@@ -1750,13 +1758,14 @@ function handleAction(action, el) {
       newFolder.projects[0].sessions.push(movedSession);
       saveData();
       closeSheet();
-      // スタック深さを変えず現在フレームだけ更新（ページ遷移なし）
-      const sfD = navStack.length;
+      // navStackをクリーンに再構築
       const nfCid = newFolder.id, nfPid = newFolder.projects[0].id;
-      navStack[sfD - 1] = { view: 'session-review', clientId: nfCid, projectId: nfPid, sessionId: sfSid };
-      if (sfD >= 2) navStack[sfD - 2] = { view: 'session-list', clientId: nfCid, projectId: nfPid };
-      if (sfD >= 3) navStack[sfD - 3] = { view: 'project-list', clientId: nfCid };
-      if (sfD >= 4) navStack[sfD - 4] = { view: 'home' };
+      navStack = [
+        { view: 'home' },
+        { view: 'project-list', clientId: nfCid },
+        { view: 'session-list', clientId: nfCid, projectId: nfPid },
+        { view: 'session-review', clientId: nfCid, projectId: nfPid, sessionId: sfSid },
+      ];
       render();
       showToast('フォルダに移動しました');
       break;
@@ -1816,7 +1825,7 @@ function handleAction(action, el) {
       if (!folder) return;
       showConfirm(
         `「${folder.name}」を削除しますか？`,
-        '中の案件・収録データもすべて削除されます。',
+        '中のフォルダ・収録データもすべて削除されます。',
         () => {
           appData.clients = appData.clients.filter(c => c.id !== fid);
           saveData();
