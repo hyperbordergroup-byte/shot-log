@@ -608,12 +608,14 @@ textarea.form-input {
 .log-entry-header {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: 0;
 }
 
 .log-entry-type {
   font-size: 14px;
   font-weight: 600;
+  min-width: 58px;
+  flex-shrink: 0;
 }
 
 .log-entry-time {
@@ -622,6 +624,8 @@ textarea.form-input {
   font-variant-numeric: tabular-nums;
   font-family: 'SF Mono', 'Courier New', monospace;
   flex-shrink: 0;
+  min-width: 62px;
+  margin-right: 8px;
 }
 
 .log-entry-duration {
