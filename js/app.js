@@ -13,7 +13,7 @@ const LOG_TYPES = {
   missed:  { label: '入力し忘れ', icon: 'clock',         color: 'var(--c-missed)' },
 };
 
-const DURATION_PRESETS_LONG = [30,60,90,120,150,180,210,240,270,300,600,900,1200,1800,2700,3600];
+const DURATION_PRESETS_LONG  = [30,60,90,120,150,180,210,240,270,300,600,900,1200,1800,2700,3600];
 const DURATION_PRESETS_BREAK = [300,600,900,1800];
 
 // ============================================================
@@ -35,6 +35,7 @@ function icon(name, size = 24) {
     film:          `<rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/>`,
     record:        `<circle cx="12" cy="12" r="10"/>`,
     stop:          `<rect x="3" y="3" width="18" height="18" rx="2"/>`,
+    home:          `<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>`,
   };
   const isFilled = ['record','stop'].includes(name);
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="${isFilled ? 'currentColor' : 'none'}" stroke="${isFilled ? 'none' : 'currentColor'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle">${paths[name] || ''}</svg>`;
@@ -48,18 +49,23 @@ const TROUBLE_CATEGORIES = {
 };
 
 // ============================================================
-// STORAGE
+// STORAGE  (v2 — flat tree model)
 // ============================================================
+const STORAGE_KEY = 'shotlog_v2';
+
 function loadData() {
   try {
-    const raw = localStorage.getItem('shotlog_v1');
-    if (raw) return JSON.parse(raw);
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const d = JSON.parse(raw);
+      if (d && d.version === 2) return d;
+    }
   } catch (e) {}
-  return { version: 1, clients: [] };
+  return { version: 2, folders: [], sessions: [] };
 }
 
 function saveData() {
-  localStorage.setItem('shotlog_v1', JSON.stringify(appData));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(appData));
 }
 
 // ============================================================
@@ -69,11 +75,10 @@ let appData = loadData();
 
 let navStack = [{ view: 'home' }];
 
-let timerInterval = null;
-let timerStartedAt = null;   // Date.now() when REC started
-let timerBase = 0;           // initial seconds (for timecode mode)
+let timerInterval  = null;
+let timerStartedAt = null;
+let timerBase      = 0;
 
-// Temporary form state stored in memory
 let formState = {};
 
 // ============================================================
@@ -116,52 +121,66 @@ function getElapsedSeconds() {
 }
 
 function logDisplayTime(log, session) {
-  const base = session.timecodeStart || 0;
+  const base   = session.timecodeStart || 0;
   const offset = session.offset || 0;
   return log.startOffset + base + offset;
 }
 
 // ============================================================
-// DATA HELPERS
+// ESCAPE HTML
 // ============================================================
-function getClient(id) { return appData.clients.find(c => c.id === id); }
-function getProject(clientId, projectId) {
-  return getClient(clientId)?.projects.find(p => p.id === projectId);
-}
-function getSession(clientId, projectId, sessionId) {
-  return getProject(clientId, projectId)?.sessions.find(s => s.id === sessionId);
+function esc(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;');
 }
 
-// 未分類（フォルダなし）の収録を格納する専用プロジェクト
-function getInboxProject() {
-  let inbox = appData.clients.find(c => c.id === '__inbox__');
-  if (!inbox) {
-    inbox = { id: '__inbox__', name: '未分類', createdAt: new Date().toISOString(),
-      projects: [{ id: '__inbox__', name: '未分類', createdAt: new Date().toISOString(), sessions: [] }] };
-    appData.clients.push(inbox);
-    saveData();
+// ============================================================
+// DATA HELPERS  (tree model)
+// ============================================================
+function getFolder(id)          { return appData.folders.find(f => f.id === id); }
+function getTopLevelFolders()   { return appData.folders.filter(f => !f.parentId); }
+function getChildFolders(pid)   { return appData.folders.filter(f => f.parentId === (pid || null)); }
+function getSessionById(id)     { return appData.sessions.find(s => s.id === id); }
+function getSessionsInFolder(fid) { return appData.sessions.filter(s => s.folderId === (fid || null)); }
+function getUnfiledSessions()   { return appData.sessions.filter(s => !s.folderId); }
+
+// All descendant folder IDs (breadth-first)
+function getFolderDescendants(folderId) {
+  const result = [];
+  const queue  = [folderId];
+  while (queue.length) {
+    const id = queue.shift();
+    const children = appData.folders.filter(f => f.parentId === id);
+    children.forEach(c => { result.push(c.id); queue.push(c.id); });
   }
-  return inbox.projects[0];
+  return result;
 }
-function getInboxSessions() {
-  return appData.clients.find(c => c.id === '__inbox__')?.projects[0]?.sessions || [];
+
+function isFolderDescendantOf(targetId, ancestorId) {
+  return getFolderDescendants(ancestorId).includes(targetId);
 }
-function getFolders() {
-  return appData.clients.filter(c => c.id !== '__inbox__');
+
+// Breadcrumb path: array from root → folder
+function getFolderPath(folderId) {
+  const path = [];
+  let cur = getFolder(folderId);
+  while (cur) {
+    path.unshift(cur);
+    cur = cur.parentId ? getFolder(cur.parentId) : null;
+  }
+  return path;
 }
-function getActiveSession() {
-  const frame = navStack.find(f => f.sessionId);
-  if (!frame) return null;
-  return getSession(frame.clientId, frame.projectId, frame.sessionId);
-}
+
 function currentFrame() { return navStack[navStack.length - 1]; }
 
 function nextVideoNumber(session) {
-  const vids = session.logs.filter(l => l.type === 'video');
-  return vids.length + 1;
+  return session.logs.filter(l => l.type === 'video').length + 1;
 }
 
-// After adding a new log, auto-calculate prev log's duration if it was 'auto'
 function resolveAutoDurations(session) {
   const logs = session.logs;
   for (let i = 0; i < logs.length - 1; i++) {
@@ -172,39 +191,25 @@ function resolveAutoDurations(session) {
 }
 
 function sessionSummary(session) {
-  const logs = session.logs;
-  let totalDur = 0;
-  let videoDur = 0; let videoCount = 0;
-  let workDur = 0;  let workCount = 0;
-  let breakDur = 0; let breakCount = 0;
-  let troubleCount = 0;
-
-  logs.forEach(l => {
+  let totalDur=0, videoDur=0, videoCount=0, workDur=0, workCount=0,
+      breakDur=0, breakCount=0, troubleCount=0;
+  session.logs.forEach(l => {
     const d = typeof l.duration === 'number' ? l.duration : 0;
     totalDur += d;
-    if (l.type === 'video')   { videoDur += d; videoCount++; }
-    if (l.type === 'work')    { workDur  += d; workCount++;  }
-    if (l.type === 'break')   { breakDur += d; breakCount++; }
-    if (l.type === 'trouble') { troubleCount++; }
+    if (l.type==='video')   { videoDur+=d; videoCount++; }
+    if (l.type==='work')    { workDur+=d;  workCount++;  }
+    if (l.type==='break')   { breakDur+=d; breakCount++; }
+    if (l.type==='trouble') { troubleCount++; }
   });
-
   return { totalDur, videoDur, videoCount, workDur, workCount, breakDur, breakCount, troubleCount };
 }
 
 // ============================================================
 // NAVIGATION
 // ============================================================
-function navigate(frame) {
-  navStack.push(frame);
-  render();
-}
-function goBack() {
-  if (navStack.length > 1) { navStack.pop(); render(); }
-}
-function goHome() {
-  navStack = [{ view: 'home' }];
-  render();
-}
+function navigate(frame) { navStack.push(frame); render(); }
+function goBack()        { if (navStack.length > 1) { navStack.pop(); render(); } }
+function goHome()        { navStack = [{ view: 'home' }]; render(); }
 
 // ============================================================
 // TOAST
@@ -248,7 +253,7 @@ function showConfirm(title, message, onOk, okLabel='削除', okClass='btn-danger
     </div>`;
   document.body.appendChild(div);
   div.querySelector('#dlg-cancel').onclick = () => div.remove();
-  div.querySelector('#dlg-ok').onclick = () => { div.remove(); onOk(); };
+  div.querySelector('#dlg-ok').onclick    = () => { div.remove(); onOk(); };
 }
 
 // ============================================================
@@ -261,12 +266,14 @@ function startTimer(session) {
   session.status = 'recording';
   saveData();
   timerInterval = setInterval(() => {
-    const el = document.getElementById('timer-display');
-    if (el) el.textContent = formatHMS(getElapsedSeconds());
+    const el  = document.getElementById('timer-display');
+    if (el)  el.textContent = formatHMS(getElapsedSeconds());
     const clk = document.getElementById('timer-clock');
     if (clk) {
       const n = new Date();
-      clk.textContent = String(n.getHours()).padStart(2,'0') + ':' + String(n.getMinutes()).padStart(2,'0') + ':' + String(n.getSeconds()).padStart(2,'0');
+      clk.textContent = String(n.getHours()).padStart(2,'0') + ':' +
+                        String(n.getMinutes()).padStart(2,'0') + ':' +
+                        String(n.getSeconds()).padStart(2,'0');
     }
   }, 200);
 }
@@ -277,40 +284,23 @@ function stopTimer() {
 }
 
 function resumeTimerIfNeeded() {
-  // Called on app init - resume timer if a session was recording
-  for (const c of appData.clients) {
-    for (const p of c.projects) {
-      for (const s of p.sessions) {
-        if (s.status === 'recording') {
-          // Restore timer
-          timerStartedAt = s.startedAt;
-          timerBase = s.timecodeStart || 0;
-          timerInterval = setInterval(() => {
-            const el = document.getElementById('timer-display');
-            if (el) el.textContent = formatHMS(getElapsedSeconds());
-            const clk = document.getElementById('timer-clock');
-            if (clk) {
-              const n = new Date();
-              clk.textContent = String(n.getHours()).padStart(2,'0') + ':' + String(n.getMinutes()).padStart(2,'0') + ':' + String(n.getSeconds()).padStart(2,'0');
-            }
-          }, 200);
-          // Navigate to recording view
-          if (c.id === '__inbox__') {
-            navStack = [
-              { view: 'home' },
-              { view: 'recording', clientId: c.id, projectId: p.id, sessionId: s.id },
-            ];
-          } else {
-            navStack = [
-              { view: 'home' },
-              { view: 'project-list', clientId: c.id },
-              { view: 'session-list', clientId: c.id, projectId: p.id },
-              { view: 'recording', clientId: c.id, projectId: p.id, sessionId: s.id },
-            ];
-          }
-          return;
+  for (const s of appData.sessions) {
+    if (s.status === 'recording') {
+      timerStartedAt = s.startedAt;
+      timerBase = s.timecodeStart || 0;
+      timerInterval = setInterval(() => {
+        const el  = document.getElementById('timer-display');
+        if (el)  el.textContent = formatHMS(getElapsedSeconds());
+        const clk = document.getElementById('timer-clock');
+        if (clk) {
+          const n = new Date();
+          clk.textContent = String(n.getHours()).padStart(2,'0') + ':' +
+                            String(n.getMinutes()).padStart(2,'0') + ':' +
+                            String(n.getSeconds()).padStart(2,'0');
         }
-      }
+      }, 200);
+      navStack = [{ view: 'home' }, { view: 'recording', sessionId: s.id }];
+      return;
     }
   }
 }
@@ -320,21 +310,19 @@ function resumeTimerIfNeeded() {
 // ============================================================
 function render() {
   const frame = currentFrame();
-  const app = document.getElementById('app');
+  const app   = document.getElementById('app');
   closeSheet();
 
   switch (frame.view) {
-    case 'home':          app.innerHTML = renderHome();         break;
-    case 'project-list':  app.innerHTML = renderProjectList();  break;
-    case 'session-list':  app.innerHTML = renderSessionList();  break;
-    case 'session-setup': app.innerHTML = renderSessionSetup(); break;
-    case 'recording':     app.innerHTML = renderRecording();    break;
-    case 'session-review':app.innerHTML = renderSessionReview();break;
-    case 'export':        app.innerHTML = renderExport();       break;
-    default:              app.innerHTML = renderHome();
+    case 'home':           app.innerHTML = renderHome();                    break;
+    case 'folder':         app.innerHTML = renderFolder(frame.folderId);   break;
+    case 'session-setup':  app.innerHTML = renderSessionSetup();            break;
+    case 'recording':      app.innerHTML = renderRecording();               break;
+    case 'session-review': app.innerHTML = renderSessionReview();           break;
+    case 'export':         app.innerHTML = renderExport();                  break;
+    default:               app.innerHTML = renderHome();
   }
 
-  // Restart timer display after re-render
   if (frame.view === 'recording' && timerInterval) {
     const el = document.getElementById('timer-display');
     if (el) el.textContent = formatHMS(getElapsedSeconds());
@@ -342,56 +330,67 @@ function render() {
 }
 
 // ============================================================
+// SHARED ROW RENDERERS
+// ============================================================
+function renderFolderRow(folder) {
+  const childCount   = getChildFolders(folder.id).length;
+  const sessionCount = getSessionsInFolder(folder.id).length;
+  const sub = [
+    childCount   > 0 ? `フォルダ ${childCount}件`  : '',
+    sessionCount > 0 ? `収録 ${sessionCount}回` : '',
+  ].filter(Boolean).join('・') || '空';
+
+  return `<div class="list-row">
+    <button class="list-item" data-action="open-folder" data-fid="${folder.id}">
+      <span class="list-item-icon" style="color:var(--text2)">${icon('folder', 22)}</span>
+      <span class="list-item-body">
+        <span class="list-item-title">${esc(folder.name)}</span>
+        <span class="list-item-sub">${sub}</span>
+      </span>
+      <span class="list-item-chevron">›</span>
+    </button>
+    <button class="list-item-opts" data-action="folder-opts" data-fid="${folder.id}">···</button>
+  </div>`;
+}
+
+function renderSessionRow(session) {
+  const isRec = session.status === 'recording';
+  const sum   = sessionSummary(session);
+  return `<div class="list-row">
+    <button class="list-item" data-action="open-session" data-sid="${session.id}">
+      <span class="list-item-icon" style="color:${isRec ? 'var(--danger)' : 'var(--text2)'}">${isRec ? icon('record', 16) : icon('file', 22)}</span>
+      <span class="list-item-body">
+        <span class="list-item-title">${esc(session.name || `第${session.number}回収録`)}${isRec ? ' <span style="color:var(--danger);font-size:12px">REC中</span>' : ''}</span>
+        <span class="list-item-sub">${session.date}・${session.logs.length}件 動画${sum.videoCount}本</span>
+      </span>
+      <span class="list-item-chevron">›</span>
+    </button>
+    <button class="list-item-opts" data-action="session-opts" data-sid="${session.id}">···</button>
+  </div>`;
+}
+
+// ============================================================
 // VIEW: HOME
 // ============================================================
 function renderHome() {
-  const folders = getFolders();
-  const inboxSessions = getInboxSessions();
+  const folders  = getTopLevelFolders();
+  const unfiled  = getUnfiledSessions();
 
-  // 未分類セクション
-  let inboxHtml = '';
-  if (inboxSessions.length > 0) {
-    const rows = inboxSessions.map(s => {
-      const isRec = s.status === 'recording';
-      const sum = sessionSummary(s);
-      return `<div class="list-row">
-        <button class="list-item" data-action="open-inbox-session" data-sid="${s.id}">
-          <span class="list-item-icon" style="color:${isRec ? 'var(--danger)' : 'var(--text2)'}">${isRec ? icon('record', 16) : icon('file', 22)}</span>
-          <span class="list-item-body">
-            <span class="list-item-title">${s.name || `第${s.number}回収録`}${isRec ? ' <span style="color:var(--danger);font-size:12px">REC中</span>' : ''}</span>
-            <span class="list-item-sub">${s.date}・${s.logs.length}件 動画${sum.videoCount}本</span>
-          </span>
-          <span class="list-item-chevron">›</span>
-        </button>
-        <button class="list-item-opts" data-action="session-options" data-cid="__inbox__" data-pid="__inbox__" data-sid="${s.id}">···</button>
-      </div>`;
-    }).join('');
-    inboxHtml = `<div class="section-label">未分類</div><div class="list-group">${rows}</div>`;
+  let unfiledHtml = '';
+  if (unfiled.length > 0) {
+    const rows = [...unfiled].reverse().map(s => renderSessionRow(s)).join('');
+    unfiledHtml = `<div class="section-label">未分類</div><div class="list-group">${rows}</div>`;
   }
 
-  // フォルダセクション
   let foldersHtml = '';
-  if (folders.length === 0 && inboxSessions.length === 0) {
+  if (folders.length === 0 && unfiled.length === 0) {
     foldersHtml = `<div class="empty-state">
       <div class="empty-state-icon" style="opacity:0.4">${icon('folder', 48)}</div>
       <div class="empty-state-text">上のボタンで収録を開始するか<br>フォルダを作成してください</div>
     </div>`;
   } else if (folders.length > 0) {
-    foldersHtml = `<div class="section-label">フォルダ</div><div class="list-group">` +
-      folders.map(c => {
-        const pCount = c.projects.length;
-        return `<div class="list-row">
-          <button class="list-item" data-action="open-client" data-id="${c.id}">
-            <span class="list-item-icon" style="color:var(--text2)">${icon('folder', 22)}</span>
-            <span class="list-item-body">
-              <span class="list-item-title">${esc(c.name)}</span>
-              <span class="list-item-sub">フォルダ ${pCount}件</span>
-            </span>
-            <span class="list-item-chevron">›</span>
-          </button>
-          <button class="list-item-opts" data-action="folder-options" data-id="${c.id}">···</button>
-        </div>`;
-      }).join('') + `</div>`;
+    foldersHtml = `<div class="section-label">フォルダ</div>
+      <div class="list-group">${folders.map(f => renderFolderRow(f)).join('')}</div>`;
   }
 
   return `<div class="header">
@@ -400,110 +399,54 @@ function renderHome() {
   <div class="content">
     <div style="padding:16px 16px 8px;display:flex;gap:10px">
       <button class="btn btn-primary" style="flex:1;width:auto" data-action="new-quick-session">新規収録</button>
-      <button class="btn btn-secondary" style="flex:1;width:auto" data-action="add-client">＋ フォルダ</button>
+      <button class="btn btn-secondary" style="flex:1;width:auto" data-action="add-folder">＋ フォルダ</button>
     </div>
-    ${inboxHtml}
+    ${unfiledHtml}
     ${foldersHtml}
   </div>`;
 }
 
 // ============================================================
-// VIEW: PROJECT LIST
+// VIEW: FOLDER (any depth)
 // ============================================================
-function renderProjectList() {
-  const { clientId } = currentFrame();
-  const client = getClient(clientId);
-  if (!client) { goHome(); return ''; }
+function renderFolder(folderId) {
+  const folder = getFolder(folderId);
+  if (!folder) { goHome(); return ''; }
 
-  const projects = client.projects;
-  let listHtml = '';
-  if (projects.length === 0) {
-    listHtml = `<div class="empty-state">
+  const childFolders = getChildFolders(folderId);
+  const sessions     = getSessionsInFolder(folderId);
+
+  let content = '';
+  if (childFolders.length === 0 && sessions.length === 0) {
+    content = `<div class="empty-state">
       <div class="empty-state-icon" style="opacity:0.4">${icon('folder', 48)}</div>
-      <div class="empty-state-text">フォルダがありません<br>上のボタンから追加してください</div>
+      <div class="empty-state-text">空のフォルダです<br>収録を追加するかフォルダを作成してください</div>
     </div>`;
   } else {
-    listHtml = `<div class="list-group">` +
-      projects.map(p => {
-        const sCount = p.sessions.length;
-        return `<div class="list-row">
-          <button class="list-item" data-action="open-project" data-cid="${clientId}" data-pid="${p.id}">
-            <span class="list-item-icon" style="color:var(--text2)">${icon('folder', 22)}</span>
-            <span class="list-item-body">
-              <span class="list-item-title">${esc(p.name)}</span>
-              <span class="list-item-sub">収録 ${sCount}回</span>
-            </span>
-            <span class="list-item-chevron">›</span>
-          </button>
-          <button class="list-item-opts" data-action="project-options" data-cid="${clientId}" data-pid="${p.id}">···</button>
-        </div>`;
-      }).join('') + `</div>`;
+    if (childFolders.length > 0) {
+      content += `<div class="section-label">フォルダ</div>
+        <div class="list-group">${childFolders.map(f => renderFolderRow(f)).join('')}</div>`;
+    }
+    if (sessions.length > 0) {
+      const reversed = [...sessions].reverse();
+      content += `<div class="section-label">収録一覧</div>
+        <div class="list-group">${reversed.map(s => renderSessionRow(s)).join('')}</div>`;
+    }
   }
 
   return `<div class="header">
     <button class="header-btn" data-action="back">‹</button>
-    <span class="header-title">${esc(client.name)}</span>
+    <span class="header-title">${esc(folder.name)}</span>
     <span style="width:44px"></span>
   </div>
   <div class="content">
     <div style="padding:16px 16px 8px;display:flex;gap:10px">
-      <button class="btn btn-primary" style="flex:1;width:auto" data-action="new-session-for-folder" data-cid="${clientId}">新規収録</button>
-      <button class="btn btn-secondary" style="flex:1;width:auto" data-action="add-project" data-cid="${clientId}">＋ フォルダ</button>
+      <button class="btn btn-primary" style="flex:1;width:auto"
+        data-action="new-session-in-folder" data-fid="${folderId}">新規収録</button>
+      <button class="btn btn-secondary" style="flex:1;width:auto"
+        data-action="add-subfolder" data-parent-fid="${folderId}">＋ フォルダ</button>
     </div>
-    <div class="section-label">フォルダ</div>
-    ${listHtml}
-  </div>`;
-}
-
-// ============================================================
-// VIEW: SESSION LIST
-// ============================================================
-function renderSessionList() {
-  const { clientId, projectId } = currentFrame();
-  const project = getProject(clientId, projectId);
-  if (!project) { goBack(); return ''; }
-
-  const sessions = [...project.sessions].reverse();
-  let listHtml = '';
-  if (sessions.length === 0) {
-    listHtml = `<div class="empty-state">
-      <div class="empty-state-icon" style="opacity:0.4">${icon('film', 48)}</div>
-      <div class="empty-state-text">収録記録がありません<br>上のボタンから新しい収録を開始してください</div>
-    </div>`;
-  } else {
-    listHtml = `<div class="list-group">` +
-      sessions.map(s => {
-        const isRec = s.status === 'recording';
-        const summary = sessionSummary(s);
-        return `<div class="list-row">
-          <button class="list-item" data-action="open-session"
-              data-cid="${clientId}" data-pid="${projectId}" data-sid="${s.id}">
-            <span class="list-item-icon" style="color:${isRec ? 'var(--danger)' : 'var(--text2)'}">${isRec ? icon('record', 16) : icon('file', 22)}</span>
-            <span class="list-item-body">
-              <span class="list-item-title">${s.name || `第${s.number}回収録`}${isRec ? ' <span style="color:var(--danger);font-size:12px">REC中</span>' : ''}</span>
-              <span class="list-item-sub">${s.date}・${s.logs.length}件 動画${summary.videoCount}本</span>
-            </span>
-            <span class="list-item-chevron">›</span>
-          </button>
-          <button class="list-item-opts" data-action="session-options" data-cid="${clientId}" data-pid="${projectId}" data-sid="${s.id}">···</button>
-        </div>`;
-      }).join('') + `</div>`;
-  }
-
-  const client = getClient(clientId);
-  return `<div class="header">
-    <button class="header-btn" data-action="back">‹</button>
-    <span class="header-title">${esc(project.name)}</span>
-    <span style="width:44px"></span>
-  </div>
-  <div class="content">
-    <div style="padding:16px 16px 8px;display:flex;gap:10px">
-      <button class="btn btn-primary" style="flex:1;width:auto" data-action="new-session"
-        data-cid="${clientId}" data-pid="${projectId}">新規収録</button>
-      <button class="btn btn-secondary" style="flex:1;width:auto" data-action="add-project" data-cid="${clientId}">＋ フォルダ</button>
-    </div>
-    <div class="section-label">収録一覧</div>
-    ${listHtml}
+    ${content}
   </div>`;
 }
 
@@ -511,12 +454,11 @@ function renderSessionList() {
 // VIEW: SESSION SETUP
 // ============================================================
 function renderSessionSetup() {
-  const { clientId, projectId, isInbox } = currentFrame();
-  const project = isInbox ? getInboxProject() : getProject(clientId, projectId);
-  if (!project) { goBack(); return ''; }
-
-  const nextNum = project.sessions.length + 1;
-  const today = new Date().toISOString().slice(0,10);
+  const { folderId } = currentFrame();
+  const sessionsHere = folderId ? getSessionsInFolder(folderId) : getUnfiledSessions();
+  const nextNum = sessionsHere.length + 1;
+  const today   = new Date().toISOString().slice(0,10);
+  const fidAttr = folderId ? `data-fid="${folderId}"` : '';
 
   return `<div class="header">
     <button class="header-btn" data-action="back">‹</button>
@@ -544,7 +486,6 @@ function renderSessionSetup() {
         <button class="segment-btn" data-val="timecode">タイムコード</button>
         <button class="segment-btn" data-val="realtime">現在時刻</button>
       </div>
-
       <div id="timecode-row" style="display:none;margin-top:12px">
         <label class="form-label">開始タイムコード</label>
         <div class="timecode-input">
@@ -575,10 +516,7 @@ function renderSessionSetup() {
     </div>
 
     <div style="margin:0 16px 32px">
-      <button class="btn btn-rec" data-action="start-recording"
-        data-cid="${isInbox ? '__inbox__' : clientId}" data-pid="${isInbox ? '__inbox__' : projectId}">
-        REC 開始
-      </button>
+      <button class="btn btn-rec" data-action="start-recording" ${fidAttr}>REC 開始</button>
     </div>
   </div>`;
 }
@@ -587,28 +525,31 @@ function renderSessionSetup() {
 // VIEW: RECORDING
 // ============================================================
 function renderRecording() {
-  const { clientId, projectId, sessionId } = currentFrame();
-  const session = getSession(clientId, projectId, sessionId);
-  const project = getProject(clientId, projectId);
+  const { sessionId } = currentFrame();
+  const session = getSessionById(sessionId);
   if (!session) { goBack(); return ''; }
 
-  const logs = session.logs;
-  const logListHtml = logs.length === 0
-    ? `<div class="empty-state" style="padding:32px 16px">
-        <div class="empty-state-text">下のボタンをタップして記録を開始</div>
-       </div>`
-    : logs.map(l => renderLogRow(l, session)).join('');
+  const folderName = session.folderId
+    ? (getFolder(session.folderId)?.name || '未分類')
+    : '未分類';
 
-  const elapsed = session.startedAt ? (Date.now() - session.startedAt) / 1000 + (session.timecodeStart||0) : (session.timecodeStart||0);
+  const logListHtml = session.logs.length === 0
+    ? `<div class="empty-state" style="padding:32px 16px">
+         <div class="empty-state-text">下のボタンをタップして記録を開始</div>
+       </div>`
+    : session.logs.map(l => renderLogRow(l, session)).join('');
+
+  const elapsed = session.startedAt
+    ? (Date.now() - session.startedAt) / 1000 + (session.timecodeStart||0)
+    : (session.timecodeStart||0);
 
   return `<div class="recording-screen">
     <div class="header">
       <div class="rec-header-info">
-        <div class="rec-header-name">${esc(project.name)} 第${session.number}回</div>
+        <div class="rec-header-name">${esc(folderName)} 第${session.number}回</div>
         <div class="rec-header-sub">${session.date}</div>
       </div>
-      <button class="stop-btn" data-action="stop-recording"
-        data-cid="${clientId}" data-pid="${projectId}" data-sid="${sessionId}">${icon('stop', 12)} STOP</button>
+      <button class="stop-btn" data-action="stop-recording" data-sid="${sessionId}">${icon('stop', 12)} STOP</button>
     </div>
 
     <div class="timer-area">
@@ -622,38 +563,31 @@ function renderRecording() {
     </div>
 
     <div class="rec-buttons">
-      <button class="rec-btn" data-type="video" data-action="tap-log"
-        data-cid="${clientId}" data-pid="${projectId}" data-sid="${sessionId}">
+      <button class="rec-btn" data-type="video" data-action="tap-log" data-sid="${sessionId}">
         <span class="rec-btn-emoji">${icon('video', 26)}</span>
         <span class="rec-btn-label">動画</span>
       </button>
-      <button class="rec-btn" data-type="work" data-action="tap-log"
-        data-cid="${clientId}" data-pid="${projectId}" data-sid="${sessionId}">
+      <button class="rec-btn" data-type="work" data-action="tap-log" data-sid="${sessionId}">
         <span class="rec-btn-emoji">${icon('message', 26)}</span>
         <span class="rec-btn-label">ワーク</span>
       </button>
-      <button class="rec-btn" data-type="break" data-action="tap-log"
-        data-cid="${clientId}" data-pid="${projectId}" data-sid="${sessionId}">
+      <button class="rec-btn" data-type="break" data-action="tap-log" data-sid="${sessionId}">
         <span class="rec-btn-emoji">${icon('coffee', 26)}</span>
         <span class="rec-btn-label">休憩</span>
       </button>
-      <button class="rec-btn" data-type="talk" data-action="tap-log"
-        data-cid="${clientId}" data-pid="${projectId}" data-sid="${sessionId}">
+      <button class="rec-btn" data-type="talk" data-action="tap-log" data-sid="${sessionId}">
         <span class="rec-btn-emoji">${icon('mic', 26)}</span>
         <span class="rec-btn-label">トーク</span>
       </button>
-      <button class="rec-btn" data-type="trouble" data-action="tap-log"
-        data-cid="${clientId}" data-pid="${projectId}" data-sid="${sessionId}">
+      <button class="rec-btn" data-type="trouble" data-action="tap-log" data-sid="${sessionId}">
         <span class="rec-btn-emoji">${icon('alertTriangle', 26)}</span>
         <span class="rec-btn-label">トラブル</span>
       </button>
-      <button class="rec-btn" data-type="other" data-action="tap-log"
-        data-cid="${clientId}" data-pid="${projectId}" data-sid="${sessionId}">
+      <button class="rec-btn" data-type="other" data-action="tap-log" data-sid="${sessionId}">
         <span class="rec-btn-emoji">${icon('list', 26)}</span>
         <span class="rec-btn-label">その他</span>
       </button>
-      <button class="rec-btn rec-btn-missed" data-action="tap-missed-log"
-        data-cid="${clientId}" data-pid="${projectId}" data-sid="${sessionId}">
+      <button class="rec-btn rec-btn-missed" data-action="tap-missed-log" data-sid="${sessionId}">
         <span class="rec-btn-emoji">${icon('clock', 22)}</span>
         <span class="rec-btn-label">入力忘れ</span>
       </button>
@@ -669,13 +603,12 @@ function renderLogRow(log, session) {
     : `<span>${formatDuration(log.durationMode === 'unknown' ? 'unknown' : log.duration)}</span>`;
 
   const typeLabel = log.type === 'video' ? `動画${log.videoNumber}` : t.label;
-  const memo = log.memo ? `<div class="log-entry-memo">${esc(log.memo)}</div>` : '';
+  const memo    = log.memo ? `<div class="log-entry-memo">${esc(log.memo)}</div>` : '';
   const isTrouble = log.type === 'trouble';
-  const isMissed = log.isMissed;
+  const isMissed  = log.isMissed;
 
   return `<div class="log-entry ${isTrouble?'log-entry-trouble':''} ${isMissed?'log-entry-missed':''}"
-      data-action="edit-log" data-log-id="${log.id}"
-      data-cid="${session._clientId||''}" data-pid="${session._projectId||''}">
+      data-action="edit-log" data-log-id="${log.id}" data-sid="${session.id}">
     <div class="log-type-dot" style="background:${t.color}"></div>
     <div class="log-entry-body">
       <div class="log-entry-header">
@@ -692,9 +625,8 @@ function renderLogRow(log, session) {
 // VIEW: SESSION REVIEW
 // ============================================================
 function renderSessionReview() {
-  const { clientId, projectId, sessionId } = currentFrame();
-  const session = getSession(clientId, projectId, sessionId);
-  const project = getProject(clientId, projectId);
+  const { sessionId } = currentFrame();
+  const session = getSessionById(sessionId);
   if (!session) { goBack(); return ''; }
 
   const sum = sessionSummary(session);
@@ -702,14 +634,13 @@ function renderSessionReview() {
   const logsHtml = session.logs.length === 0
     ? `<div class="empty-state"><div class="empty-state-text">記録がありません</div></div>`
     : `<div class="list-group" style="margin-bottom:16px">` +
-        session.logs.map(l => renderReviewEntry(l, session, clientId, projectId)).join('') +
+        session.logs.map(l => renderReviewEntry(l, session)).join('') +
       `</div>`;
 
   return `<div class="header">
     <button class="header-btn" data-action="back">‹</button>
-    <span class="header-title">${session.name || `第${session.number}回収録`}</span>
-    <button class="header-action" data-action="go-export"
-      data-cid="${clientId}" data-pid="${projectId}" data-sid="${sessionId}">出力</button>
+    <span class="header-title">${esc(session.name || `第${session.number}回収録`)}</span>
+    <button class="header-action" data-action="go-export" data-sid="${sessionId}">出力</button>
   </div>
   <div class="content">
 
@@ -746,17 +677,10 @@ function renderSessionReview() {
     ${logsHtml}
 
     <div style="padding:0 16px 16px;display:flex;flex-direction:column;gap:10px">
-      <button class="btn btn-secondary" style="color:var(--primary);border:1px solid var(--primary)"
-        data-action="move-to-folder"
-        data-sid="${sessionId}" data-src-cid="${clientId}" data-src-pid="${projectId}">
-        📁 フォルダに移動
-      </button>
-      <button class="btn btn-secondary" data-action="add-missed-log"
-        data-cid="${clientId}" data-pid="${projectId}" data-sid="${sessionId}">
+      <button class="btn btn-secondary" data-action="add-missed-log" data-sid="${sessionId}">
         入力し忘れを追加
       </button>
-      <button class="btn btn-secondary btn-sm" data-action="edit-offset"
-        data-cid="${clientId}" data-pid="${projectId}" data-sid="${sessionId}"
+      <button class="btn btn-secondary btn-sm" data-action="edit-offset" data-sid="${sessionId}"
         style="color:var(--text2)">
         オフセット補正 ${session.offset ? (session.offset>0?'+':'')+formatHMS(Math.abs(session.offset)) : '0:00:00'}
       </button>
@@ -764,18 +688,17 @@ function renderSessionReview() {
   </div>`;
 }
 
-function renderReviewEntry(log, session, clientId, projectId) {
+function renderReviewEntry(log, session) {
   const t = LOG_TYPES[log.type] || LOG_TYPES.other;
   const displaySec = logDisplayTime(log, session);
-  const typeLabel = log.type === 'video' ? `動画${log.videoNumber}` : t.label;
-  const dur = log.durationMode === 'unknown' ? '不明'
-            : log.durationMode === 'auto' && log.duration == null ? '自動計測'
+  const typeLabel  = log.type === 'video' ? `動画${log.videoNumber}` : t.label;
+  const dur = log.durationMode === 'unknown'                           ? '不明'
+            : log.durationMode === 'auto' && log.duration == null      ? '自動計測'
             : formatDuration(log.duration);
   const isTrouble = log.type === 'trouble';
 
   return `<div class="review-log-entry ${isTrouble?'trouble-badge':''}"
-      data-action="edit-log" data-log-id="${log.id}"
-      data-cid="${clientId}" data-pid="${projectId}" data-sid="${session.id}">
+      data-action="edit-log" data-log-id="${log.id}" data-sid="${session.id}">
     <div class="review-log-left">
       <div class="review-log-start">${formatHMS(displaySec)}</div>
       <div class="review-log-dur">${dur}</div>
@@ -797,9 +720,8 @@ function renderReviewEntry(log, session, clientId, projectId) {
 // VIEW: EXPORT
 // ============================================================
 function renderExport() {
-  const { clientId, projectId, sessionId } = currentFrame();
-  const session = getSession(clientId, projectId, sessionId);
-  const project = getProject(clientId, projectId);
+  const { sessionId } = currentFrame();
+  const session = getSessionById(sessionId);
   if (!session) { goBack(); return ''; }
 
   return `<div class="header">
@@ -812,30 +734,25 @@ function renderExport() {
     <div class="form-group">
       <div class="form-label">CSV（スプレッドシート）</div>
       <div class="export-btn-row">
-        <button class="btn btn-secondary btn-sm" data-action="download-csv"
-          data-cid="${clientId}" data-pid="${projectId}" data-sid="${sessionId}">↓ ダウンロード</button>
-        <button class="btn btn-secondary btn-sm" data-action="copy-csv"
-          data-cid="${clientId}" data-pid="${projectId}" data-sid="${sessionId}">コピー</button>
+        <button class="btn btn-secondary btn-sm" data-action="download-csv" data-sid="${sessionId}">↓ ダウンロード</button>
+        <button class="btn btn-secondary btn-sm" data-action="copy-csv" data-sid="${sessionId}">コピー</button>
       </div>
-      <div class="export-preview">${esc(generateCSV(session, project))}</div>
+      <div class="export-preview">${esc(generateCSV(session))}</div>
     </div>
 
     <div class="form-group">
       <div class="form-label">テキスト</div>
       <div class="export-btn-row">
-        <button class="btn btn-secondary btn-sm" data-action="download-txt"
-          data-cid="${clientId}" data-pid="${projectId}" data-sid="${sessionId}">↓ ダウンロード</button>
-        <button class="btn btn-secondary btn-sm" data-action="copy-txt"
-          data-cid="${clientId}" data-pid="${projectId}" data-sid="${sessionId}">コピー</button>
+        <button class="btn btn-secondary btn-sm" data-action="download-txt" data-sid="${sessionId}">↓ ダウンロード</button>
+        <button class="btn btn-secondary btn-sm" data-action="copy-txt" data-sid="${sessionId}">コピー</button>
       </div>
-      <div class="export-preview">${esc(generateText(session, project))}</div>
+      <div class="export-preview">${esc(generateText(session))}</div>
     </div>
 
     <div class="form-group">
       <div class="form-label">JSONデータ（共有・バックアップ）</div>
       <div class="export-btn-row">
-        <button class="btn btn-secondary btn-sm" data-action="download-json"
-          data-cid="${clientId}" data-pid="${projectId}" data-sid="${sessionId}">↓ エクスポート</button>
+        <button class="btn btn-secondary btn-sm" data-action="download-json" data-sid="${sessionId}">↓ エクスポート</button>
         <button class="btn btn-secondary btn-sm" data-action="import-json">↑ インポート</button>
       </div>
     </div>
@@ -846,8 +763,12 @@ function renderExport() {
 // ============================================================
 // EXPORT GENERATORS
 // ============================================================
-function generateCSV(session, project) {
-  const header = ['✔', '開始', '終了', '所要時間', '項目', 'メモ', '備考'].join(',');
+function sessionFolderName(session) {
+  return session.folderId ? (getFolder(session.folderId)?.name || '未分類') : '未分類';
+}
+
+function generateCSV(session) {
+  const header = ['✔','開始','終了','所要時間','項目','メモ','備考'].join(',');
   const rows = session.logs.map(l => {
     const t = LOG_TYPES[l.type] || LOG_TYPES.other;
     const startSec = logDisplayTime(l, session);
@@ -863,16 +784,17 @@ function generateCSV(session, project) {
       dur != null ? formatDuration(dur) : (l.durationMode === 'unknown' ? '不明' : '—'),
       typeLabel,
       `"${(l.memo||l.filename||'').replace(/"/g,'""')}"`,
-      note
+      note,
     ].join(',');
   });
   return [header, ...rows].join('\n');
 }
 
-function generateText(session, project) {
+function generateText(session) {
+  const folderName = sessionFolderName(session);
   const sum = sessionSummary(session);
   const lines = [
-    `【${project.name} 第${session.number}回収録】 ${session.date}`,
+    `【${folderName} 第${session.number}回収録】 ${session.date}`,
     '',
     `総収録時間: ${formatHMS(sum.totalDur)}`,
     `動画: ${sum.videoCount}本・計${formatDuration(sum.videoDur)}`,
@@ -882,19 +804,52 @@ function generateText(session, project) {
     '',
     '--- タイムライン ---',
   ];
-
   session.logs.forEach(l => {
     const t = LOG_TYPES[l.type] || LOG_TYPES.other;
-    const startSec = logDisplayTime(l, session);
+    const startSec  = logDisplayTime(l, session);
     const typeLabel = l.type === 'video' ? `動画${l.videoNumber}` : t.label;
-    const dur = l.durationMode === 'unknown' ? '不明'
-              : l.durationMode === 'auto' && l.duration == null ? '自動'
+    const dur = l.durationMode === 'unknown'                          ? '不明'
+              : l.durationMode === 'auto' && l.duration == null       ? '自動'
               : formatDuration(l.duration);
     const memo = l.memo || l.filename || '';
     lines.push(`${formatHMS(startSec)} [${typeLabel}] ${dur} ${memo}${l.isMissed?' ※入力し忘れ':''}`);
   });
-
   return lines.join('\n');
+}
+
+// ============================================================
+// FOLDER PICKER  (builds HTML for move destination sheet)
+// ============================================================
+// confirmAction : data-action value to put on each button
+// extraAttrs    : extra data-* attribute string (e.g. data-sid="xxx")
+// excludeFid    : folder to exclude (and its descendants)
+// currentFid    : folder currently selected (shown as 現在地)
+// indent / pid  : recursion state
+function buildFolderPickerHtml(confirmAction, extraAttrs, excludeFid, currentFid, indent, parentId) {
+  indent   = indent   || 0;
+  parentId = parentId || null;
+
+  const excludeSet = excludeFid
+    ? new Set([excludeFid, ...getFolderDescendants(excludeFid)])
+    : new Set();
+
+  let html = '';
+  const folders = appData.folders.filter(f => f.parentId === parentId);
+  for (const f of folders) {
+    if (excludeSet.has(f.id)) continue;
+    const isCurrent = f.id === currentFid;
+    const pl = (indent * 20 + 16) + 'px';
+    html += `<button class="list-item" style="border-radius:var(--r-sm);padding-left:${pl}"
+      data-action="${confirmAction}" data-target-fid="${f.id}" ${extraAttrs}>
+      <span class="list-item-icon" style="color:var(--text2);margin-right:8px">${icon('folder', 18)}</span>
+      <span class="list-item-body">
+        <span class="list-item-title">${esc(f.name)}</span>
+      </span>
+      ${isCurrent ? '<span style="color:var(--primary);font-size:12px;flex-shrink:0">現在地</span>' : ''}
+    </button>`;
+    html += buildFolderPickerHtml(confirmAction, extraAttrs, excludeFid, currentFid, indent + 1, f.id);
+  }
+  return html;
 }
 
 // ============================================================
@@ -904,23 +859,22 @@ function openLogForm(type, session, editLog = null, tapContext = null) {
   formState = {
     type,
     editLog,
-    duration: editLog?.duration ?? null,
-    durationMode: editLog?.durationMode ?? 'auto',
-    memo: editLog?.memo ?? '',
-    filename: editLog?.filename ?? '',
-    troubleCategory: editLog?.troubleCategory ?? '',
+    duration:           editLog?.duration          ?? null,
+    durationMode:       editLog?.durationMode       ?? 'auto',
+    memo:               editLog?.memo               ?? '',
+    filename:           editLog?.filename           ?? '',
+    troubleCategory:    editLog?.troubleCategory    ?? '',
     troubleSubcategory: editLog?.troubleSubcategory ?? '',
-    photos: editLog?.photos ? [...editLog.photos] : [],
-    startOffsetOverride: editLog?.startOffset ?? null,
-    isMissed: editLog?.isMissed ?? false,
-    videoNumber: editLog?.videoNumber ?? null,
+    photos:             editLog?.photos ? [...editLog.photos] : [],
+    isMissed:           editLog?.isMissed           ?? false,
+    videoNumber:        editLog?.videoNumber        ?? null,
   };
   if (tapContext) formState._tapContext = tapContext;
 
-  const presets = type === 'break' ? DURATION_PRESETS_BREAK : DURATION_PRESETS_LONG;
-  const t = LOG_TYPES[type] || LOG_TYPES.other;
-  const isEdit = !!editLog;
-  const title = isEdit ? `${t.label}を編集` : `${t.label}を記録`;
+  const presets  = type === 'break' ? DURATION_PRESETS_BREAK : DURATION_PRESETS_LONG;
+  const t        = LOG_TYPES[type] || LOG_TYPES.other;
+  const isEdit   = !!editLog;
+  const title    = isEdit ? `${t.label}を編集` : `${t.label}を記録`;
 
   let durationHtml = '';
   if (type !== 'talk' && type !== 'trouble') {
@@ -946,10 +900,10 @@ function openLogForm(type, session, editLog = null, tapContext = null) {
       <textarea class="form-input" id="f-memo" placeholder="メモを入力">${esc(formState.memo)}</textarea>
     </div>` : '';
 
-  const photoHtml = type === 'trouble' ? renderPhotoField(formState.photos) : '';
-
+  const photoHtml  = type === 'trouble' ? renderPhotoField(formState.photos) : '';
   const deleteHtml = isEdit ? `
-    <button class="btn btn-danger btn-sm" style="margin-top:8px" data-action="delete-log" data-log-id="${editLog.id}">
+    <button class="btn btn-danger btn-sm" style="margin-top:8px"
+      data-action="delete-log" data-log-id="${editLog.id}" data-sid="${session.id}">
       削除
     </button>` : '';
 
@@ -968,7 +922,7 @@ function openLogForm(type, session, editLog = null, tapContext = null) {
 
 function renderDurationPicker(presets, currentMode, currentDuration) {
   const isUnknown = currentMode === 'unknown';
-  const isCustom = currentMode === 'custom';
+  const isCustom  = currentMode === 'custom';
 
   const presetBtns = presets.map(sec => {
     const selected = currentMode === 'preset' && currentDuration === sec ? 'selected' : '';
@@ -1099,8 +1053,8 @@ function openMissedForm(session) {
   `);
 }
 
-function openOffsetEdit(session, clientId, projectId) {
-  const abs = Math.abs(session.offset || 0);
+function openOffsetEdit(session) {
+  const abs  = Math.abs(session.offset || 0);
   const sign = (session.offset || 0) < 0 ? -1 : 1;
   const h = Math.floor(abs/3600);
   const m = Math.floor((abs%3600)/60);
@@ -1124,113 +1078,92 @@ function openOffsetEdit(session, clientId, projectId) {
         </div>
       </div>
     </div>
-    <button class="btn btn-primary" data-action="save-offset"
-      data-cid="${clientId}" data-pid="${projectId}" data-sid="${session.id}">保存</button>
+    <button class="btn btn-primary" data-action="save-offset" data-sid="${session.id}">保存</button>
   `);
-}
-
-// ============================================================
-// ESCAPE HTML
-// ============================================================
-function esc(str) {
-  if (!str) return '';
-  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 // ============================================================
 // ACTION HANDLERS
 // ============================================================
 function handleAction(action, el) {
-  const cid = el.dataset.cid;
-  const pid = el.dataset.pid;
   const sid = el.dataset.sid;
+  const fid = el.dataset.fid;
 
   switch (action) {
 
-    // Navigation
+    // ── Navigation ──────────────────────────────────────────
     case 'back': goBack(); break;
 
-    case 'open-client':
-      navigate({ view: 'project-list', clientId: el.dataset.id });
-      break;
-
-    case 'open-project':
-      navigate({ view: 'session-list', clientId: cid, projectId: pid });
+    case 'open-folder':
+      navigate({ view: 'folder', folderId: fid });
       break;
 
     case 'open-session': {
-      const s = getSession(cid, pid, sid);
-      if (s?.status === 'recording') {
-        navigate({ view: 'recording', clientId: cid, projectId: pid, sessionId: sid });
+      const s = getSessionById(sid);
+      if (!s) return;
+      if (s.status === 'recording') {
+        navigate({ view: 'recording',      sessionId: sid });
       } else {
-        navigate({ view: 'session-review', clientId: cid, projectId: pid, sessionId: sid });
+        navigate({ view: 'session-review', sessionId: sid });
       }
       break;
     }
 
-    case 'new-session':
-      navigate({ view: 'session-setup', clientId: cid, projectId: pid });
-      break;
-
     case 'go-export':
-      navigate({ view: 'export', clientId: cid, projectId: pid, sessionId: sid });
+      navigate({ view: 'export', sessionId: sid });
       break;
 
-    // Add Client
-    case 'add-client': {
+    // ── Create folders ───────────────────────────────────────
+    case 'add-folder': {
       openSheet(`
         <div class="sheet-title">📁 フォルダを追加</div>
         <div class="form-group">
           <label class="form-label">フォルダ名</label>
-          <input class="form-input" type="text" id="new-client-name" placeholder="例：企業名など" autofocus>
+          <input class="form-input" type="text" id="new-folder-name" placeholder="例：企業名など">
         </div>
-        <button class="btn btn-primary" data-action="save-client">追加</button>
+        <button class="btn btn-primary" data-action="save-folder">追加</button>
       `);
-      setTimeout(() => document.getElementById('new-client-name')?.focus(), 300);
+      setTimeout(() => document.getElementById('new-folder-name')?.focus(), 300);
       break;
     }
 
-    case 'save-client': {
-      const name = document.getElementById('new-client-name')?.value.trim();
-      if (!name) { showToast('名前を入力してください'); return; }
-      const client = { id: uid(), name, createdAt: new Date().toISOString(), projects: [] };
-      appData.clients.push(client);
-      saveData();
-      closeSheet();
-      render();
-      break;
-    }
-
-    // Add Project
-    case 'add-project': {
-      const _cid = el.dataset.cid;
+    case 'add-subfolder': {
+      const pFid = el.dataset.parentFid;
       openSheet(`
-        <div class="sheet-title">フォルダを追加</div>
+        <div class="sheet-title">📁 フォルダを追加</div>
         <div class="form-group">
           <label class="form-label">フォルダ名</label>
-          <input class="form-input" type="text" id="new-project-name" placeholder="例：フォルダ名など" autofocus>
+          <input class="form-input" type="text" id="new-folder-name" placeholder="例：フォルダ名など">
         </div>
-        <button class="btn btn-primary" data-action="save-project" data-cid="${_cid}">追加</button>
+        <button class="btn btn-primary" data-action="save-folder" data-parent-fid="${pFid}">追加</button>
       `);
-      setTimeout(() => document.getElementById('new-project-name')?.focus(), 300);
+      setTimeout(() => document.getElementById('new-folder-name')?.focus(), 300);
       break;
     }
 
-    case 'save-project': {
-      const name = document.getElementById('new-project-name')?.value.trim();
-      if (!name) { showToast('フォルダ名を入力してください'); return; }
-      const c = getClient(el.dataset.cid);
-      if (!c) return;
-      c.projects.push({ id: uid(), name, createdAt: new Date().toISOString(), sessions: [] });
+    case 'save-folder': {
+      const name = document.getElementById('new-folder-name')?.value.trim();
+      if (!name) { showToast('名前を入力してください'); return; }
+      const parentFid = el.dataset.parentFid || null;
+      appData.folders.push({ id: uid(), name, parentId: parentFid, createdAt: new Date().toISOString() });
       saveData();
       closeSheet();
       render();
       break;
     }
 
-    // Start Recording
+    // ── Start session ────────────────────────────────────────
+    case 'new-quick-session':
+      navigate({ view: 'session-setup', folderId: null });
+      break;
+
+    case 'new-session-in-folder':
+      navigate({ view: 'session-setup', folderId: fid });
+      break;
+
     case 'start-recording': {
-      const num = parseInt(document.getElementById('setup-num')?.value) || 1;
+      const targetFid = el.dataset.fid || null;
+      const num  = parseInt(document.getElementById('setup-num')?.value) || 1;
       const date = document.getElementById('setup-date')?.value || new Date().toISOString().slice(0,10);
 
       const timeBaseActive = document.querySelector('#time-base-seg .segment-btn.active');
@@ -1249,20 +1182,19 @@ function handleAction(action, el) {
       }
 
       const offSign = parseInt(document.getElementById('offset-sign')?.value) || 1;
-      const offSec = parseTimecode(
+      const offSec  = parseTimecode(
         document.getElementById('off-h')?.value,
         document.getElementById('off-m')?.value,
         document.getElementById('off-s')?.value
       );
       const offset = offSign * offSec;
 
-      const project = cid === '__inbox__' ? getInboxProject() : getProject(cid, pid);
-      if (!project) return;
-
       const session = {
         id: uid(),
+        folderId: targetFid,
         number: num,
         date,
+        name: '',
         timeBase,
         timecodeStart,
         offset,
@@ -1270,22 +1202,21 @@ function handleAction(action, el) {
         endedAt: null,
         status: 'recording',
         logs: [],
+        createdAt: new Date().toISOString(),
       };
 
-      project.sessions.push(session);
+      appData.sessions.push(session);
       saveData();
-
-      navStack.push({ view: 'recording', clientId: cid, projectId: pid, sessionId: session.id });
+      navStack.push({ view: 'recording', sessionId: session.id });
       render();
       startTimer(session);
       break;
     }
 
-    // Stop Recording
+    // ── Stop recording ───────────────────────────────────────
     case 'stop-recording': {
-      const session = getSession(cid, pid, sid);
+      const session = getSessionById(sid);
       if (!session) return;
-
       showConfirm('収録を終了しますか？', '終了後は閲覧・編集モードに切り替わります。',
         () => {
           stopTimer();
@@ -1293,39 +1224,33 @@ function handleAction(action, el) {
           session.endedAt = Date.now();
           resolveAutoDurations(session);
           saveData();
-          navStack[navStack.length-1] = { view: 'session-review', clientId: cid, projectId: pid, sessionId: sid };
+          navStack[navStack.length-1] = { view: 'session-review', sessionId: sid };
           render();
         }, '終了する', 'btn-danger'
       );
       break;
     }
 
-    // Tap log button during recording
+    // ── Log buttons ──────────────────────────────────────────
     case 'tap-log': {
-      const type = el.dataset.type;
-      const tapTime = Date.now();
-      const session = getSession(cid, pid, sid);
+      const type     = el.dataset.type;
+      const tapTime  = Date.now();
+      const session  = getSessionById(sid);
       if (!session) return;
-
       const startOffset = (tapTime - session.startedAt) / 1000;
-      const tapContext = { type, startOffset, clientId: cid, projectId: pid, sessionId: sid };
-      openLogForm(type, session, null, tapContext);
+      openLogForm(type, session, null, { type, startOffset, sessionId: sid });
       break;
     }
 
-    // Save log from recording
     case 'save-log': {
       const ctx = formState._tapContext;
-      if (!ctx) {
-        // Edit mode
-        saveEditedLog();
-        return;
-      }
-      const { type, startOffset, clientId, projectId, sessionId } = ctx;
-      const session = getSession(clientId, projectId, sessionId);
+      if (!ctx) { saveEditedLog(); return; }
+
+      const { type, startOffset, sessionId: ctxSid } = ctx;
+      const session = getSessionById(ctxSid);
       if (!session) return;
 
-      const log = buildLogFromForm(type, startOffset, false);
+      const log = buildLogFromForm(type, startOffset, false, session);
       if (!log) return;
 
       session.logs.push(log);
@@ -1333,7 +1258,6 @@ function handleAction(action, el) {
       saveData();
 
       closeSheet();
-      // Refresh log list without full re-render
       const ll = document.getElementById('log-list');
       if (ll) {
         ll.innerHTML = session.logs.map(l => renderLogRow(l, session)).join('');
@@ -1343,32 +1267,21 @@ function handleAction(action, el) {
       break;
     }
 
-    // Edit log (from review or recording)
     case 'edit-log': {
-      const logId = el.dataset.logId;
-      // Find session
-      let foundSession = null, foundClientId = null, foundProjectId = null;
-      const frame = currentFrame();
-      if (frame.sessionId) {
-        foundSession = getSession(frame.clientId, frame.projectId, frame.sessionId);
-        foundClientId = frame.clientId;
-        foundProjectId = frame.projectId;
-      }
-      if (!foundSession) break;
-      const log = foundSession.logs.find(l => l.id === logId);
+      const logId   = el.dataset.logId;
+      const session = getSessionById(sid);
+      if (!session) break;
+      const log = session.logs.find(l => l.id === logId);
       if (!log) break;
-
-      formState._editContext = { logId, clientId: foundClientId, projectId: foundProjectId, sessionId: frame.sessionId };
-      openLogForm(log.type, foundSession, log);
+      formState._editContext = { logId, sessionId: sid };
+      openLogForm(log.type, session, log);
       break;
     }
 
     case 'delete-log': {
-      const logId = el.dataset.logId;
-      const frame = currentFrame();
-      const session = getSession(frame.clientId, frame.projectId, frame.sessionId);
+      const logId   = el.dataset.logId;
+      const session = getSessionById(sid);
       if (!session) return;
-
       showConfirm('この記録を削除しますか？', '削除すると元に戻せません。',
         () => {
           session.logs = session.logs.filter(l => l.id !== logId);
@@ -1381,24 +1294,25 @@ function handleAction(action, el) {
       break;
     }
 
-    // Add missed log
+    // ── Missed log ───────────────────────────────────────────
     case 'tap-missed-log':
     case 'add-missed-log': {
-      const session = getSession(cid, pid, sid);
+      const session = getSessionById(sid);
       if (!session) return;
-      openMissedForm(session); // openMissedForm が formState を上書きするので必ず後で設定
-      formState._editContext = { clientId: cid, projectId: pid, sessionId: sid };
+      openMissedForm(session);                        // openMissedForm overwrites formState → set _editContext AFTER
+      formState._editContext = { sessionId: sid };
       break;
     }
 
     case 'save-missed-log': {
-      const ctx = formState._editContext;
-      const session = getSession(ctx.clientId, ctx.projectId, ctx.sessionId);
+      const ctx     = formState._editContext;
+      if (!ctx) return;
+      const session = getSessionById(ctx.sessionId);
       if (!session) return;
 
-      const h = document.getElementById('missed-h')?.value || 0;
-      const m = document.getElementById('missed-m')?.value || 0;
-      const s = document.getElementById('missed-s')?.value || 0;
+      const h  = document.getElementById('missed-h')?.value || 0;
+      const m  = document.getElementById('missed-m')?.value || 0;
+      const s  = document.getElementById('missed-s')?.value || 0;
       const startOffset = parseTimecode(h, m, s) - (session.timecodeStart||0) - (session.offset||0);
       const type = formState.selectedType || 'other';
       const memo = document.getElementById('f-memo')?.value.trim() || '';
@@ -1406,15 +1320,15 @@ function handleAction(action, el) {
       const dh = parseInt(document.getElementById('missed-dur-h')?.value) || 0;
       const dm = parseInt(document.getElementById('missed-dur-m')?.value) || 0;
       const ds = parseInt(document.getElementById('missed-dur-s')?.value) || 0;
-      const durSec = dh * 3600 + dm * 60 + ds;
+      const durSec = dh*3600 + dm*60 + ds;
 
       const log = {
         id: uid(),
         type,
         startOffset: Math.max(0, startOffset),
-        duration: durSec > 0 ? durSec : null,
+        duration:     durSec > 0 ? durSec : null,
         durationMode: durSec > 0 ? 'preset' : 'unknown',
-        videoNumber: type === 'video' ? nextVideoNumber(session) : null,
+        videoNumber:  type === 'video' ? nextVideoNumber(session) : null,
         filename: '',
         memo,
         troubleCategory: '', troubleSubcategory: '',
@@ -1425,7 +1339,6 @@ function handleAction(action, el) {
 
       session.logs.push(log);
       session.logs.sort((a,b) => a.startOffset - b.startOffset);
-      // Re-number videos
       let vn = 1;
       session.logs.forEach(l => { if (l.type==='video') l.videoNumber = vn++; });
       saveData();
@@ -1435,7 +1348,7 @@ function handleAction(action, el) {
       break;
     }
 
-    // Preset duration selection
+    // ── Duration preset ──────────────────────────────────────
     case 'select-preset': {
       const sec = parseInt(el.dataset.sec);
       formState.durationMode = 'preset';
@@ -1457,15 +1370,15 @@ function handleAction(action, el) {
       break;
     }
 
-    // Trouble category
+    // ── Trouble ──────────────────────────────────────────────
     case 'select-trouble-cat': {
       const cat = el.dataset.cat;
-      formState.troubleCategory = cat;
+      formState.troubleCategory    = cat;
       formState.troubleSubcategory = '';
       document.querySelectorAll('.category-btn').forEach(b =>
         b.classList.toggle('selected', b.dataset.cat === cat)
       );
-      const row = document.getElementById('sub-cat-row');
+      const row  = document.getElementById('sub-cat-row');
       if (row) {
         const subs = TROUBLE_CATEGORIES[cat]?.subs || [];
         if (subs.length > 0) {
@@ -1493,7 +1406,7 @@ function handleAction(action, el) {
       break;
     }
 
-    // Missed type selection
+    // ── Missed type ──────────────────────────────────────────
     case 'missed-type': {
       const mtype = el.dataset.mtype;
       formState.selectedType = mtype;
@@ -1503,7 +1416,7 @@ function handleAction(action, el) {
       break;
     }
 
-    // Remove photo
+    // ── Photo ────────────────────────────────────────────────
     case 'remove-photo': {
       const idx = parseInt(el.dataset.index);
       formState.photos.splice(idx, 1);
@@ -1523,19 +1436,19 @@ function handleAction(action, el) {
       break;
     }
 
-    // Offset edit
+    // ── Offset ───────────────────────────────────────────────
     case 'edit-offset': {
-      const session = getSession(cid, pid, sid);
+      const session = getSessionById(sid);
       if (!session) return;
-      openOffsetEdit(session, cid, pid);
+      openOffsetEdit(session);
       break;
     }
 
     case 'save-offset': {
-      const session = getSession(cid, pid, sid);
+      const session = getSessionById(sid);
       if (!session) return;
       const sign = parseInt(document.getElementById('off-sign')?.value) || 1;
-      const sec = parseTimecode(
+      const sec  = parseTimecode(
         document.getElementById('off-h2')?.value,
         document.getElementById('off-m2')?.value,
         document.getElementById('off-s2')?.value
@@ -1548,58 +1461,42 @@ function handleAction(action, el) {
       break;
     }
 
-    // Export
+    // ── Export ───────────────────────────────────────────────
     case 'download-csv': {
-      const session = getSession(cid, pid, sid);
-      const project = getProject(cid, pid);
-      downloadFile(generateCSV(session, project), `shotlog_${session.date}_${project.name}.csv`, 'text/csv');
+      const session = getSessionById(sid);
+      downloadFile(generateCSV(session), `shotlog_${session.date}_${sessionFolderName(session)}.csv`, 'text/csv');
       break;
     }
     case 'copy-csv': {
-      const session = getSession(cid, pid, sid);
-      const project = getProject(cid, pid);
-      copyText(generateCSV(session, project));
+      copyText(generateCSV(getSessionById(sid)));
       break;
     }
     case 'download-txt': {
-      const session = getSession(cid, pid, sid);
-      const project = getProject(cid, pid);
-      downloadFile(generateText(session, project), `shotlog_${session.date}_${project.name}.txt`, 'text/plain');
+      const session = getSessionById(sid);
+      downloadFile(generateText(session), `shotlog_${session.date}_${sessionFolderName(session)}.txt`, 'text/plain');
       break;
     }
     case 'copy-txt': {
-      const session = getSession(cid, pid, sid);
-      const project = getProject(cid, pid);
-      copyText(generateText(session, project));
+      copyText(generateText(getSessionById(sid)));
       break;
     }
     case 'download-json': {
-      const session = getSession(cid, pid, sid);
-      const project = getProject(cid, pid);
-      const client = getClient(cid);
-      const exportData = {
-        version: 1,
-        exportedAt: new Date().toISOString(),
-        client: { id: client.id, name: client.name },
-        project: { id: project.id, name: project.name },
-        session,
-      };
+      const session = getSessionById(sid);
+      const exportData = { version: 2, exportedAt: new Date().toISOString(), session };
       downloadFile(JSON.stringify(exportData, null, 2), `shotlog_export_${session.date}.json`, 'application/json');
       break;
     }
     case 'import-json': {
       const input = document.createElement('input');
-      input.type = 'file';
+      input.type   = 'file';
       input.accept = '.json';
       input.onchange = e => {
         const file = e.target.files[0];
         if (!file) return;
         const reader = new FileReader();
         reader.onload = ev => {
-          try {
-            const data = JSON.parse(ev.target.result);
-            handleImport(data);
-          } catch { showToast('JSONの読み込みに失敗しました'); }
+          try   { handleImport(JSON.parse(ev.target.result)); }
+          catch { showToast('JSONの読み込みに失敗しました'); }
         };
         reader.readAsText(file);
       };
@@ -1607,234 +1504,66 @@ function handleAction(action, el) {
       break;
     }
 
-    // Segment buttons for time base
-    case 'time-base-change': break; // handled in input handler
-
-    // 案件一覧画面から新規収録（案件が1つなら直接、複数ならシートで選択）
-    case 'new-session-for-folder': {
-      const folder = getClient(cid);
-      if (!folder) return;
-      const projects = folder.projects;
-      if (projects.length === 0) {
-        showToast('先にフォルダを追加してください');
-      } else if (projects.length === 1) {
-        navigate({ view: 'session-setup', clientId: cid, projectId: projects[0].id });
-      } else {
-        const rows = projects.map(p =>
-          `<button class="list-item" style="border-radius:var(--r-sm)"
-            data-action="new-session" data-cid="${cid}" data-pid="${p.id}">
-            <span class="list-item-icon" style="color:var(--text2)">${icon('folder', 22)}</span>
-            <span class="list-item-body">
-              <span class="list-item-title">${esc(p.name)}</span>
-            </span>
-          </button>`
-        ).join('');
-        openSheet(`
-          <div class="sheet-title">収録するフォルダを選択</div>
-          <div class="list-group" style="margin:0">${rows}</div>
-        `);
-      }
-      break;
-    }
-
-    // フォルダなしで即収録
-    case 'new-quick-session':
-      navigate({ view: 'session-setup', isInbox: true });
-      break;
-
-    // 未分類セッションを開く
-    case 'open-inbox-session': {
-      const inboxSid = el.dataset.sid;
-      const s = getInboxSessions().find(s => s.id === inboxSid);
-      if (!s) return;
-      if (s.status === 'recording') {
-        navigate({ view: 'recording', clientId: '__inbox__', projectId: '__inbox__', sessionId: inboxSid });
-      } else {
-        navigate({ view: 'session-review', clientId: '__inbox__', projectId: '__inbox__', sessionId: inboxSid });
-      }
-      break;
-    }
-
-    // フォルダに移動シートを開く
-    case 'move-to-folder': {
-      const moveSid = el.dataset.sid;
-      const srcCid = el.dataset.srcCid;
-      const srcPid = el.dataset.srcPid;
-      const folders = getFolders();
-      // 移動先候補：現在の案件を除外（inbox含む全フォルダ）
-      const allDests = [
-        // 未分類（inbox）を先頭に
-        ...(srcCid !== '__inbox__' ? [{
-          fId: '__inbox__', fName: '未分類', pId: '__inbox__', pName: '未分類'
-        }] : []),
-        // 通常フォルダ
-        ...folders.flatMap(f => f.projects
-          .filter(p => !(f.id === srcCid && p.id === srcPid))
-          .map(p => ({ fId: f.id, fName: f.name, pId: p.id, pName: p.name }))
-        )
-      ];
-      let optionsHtml = '';
-      if (allDests.length === 0) {
-        optionsHtml = `<p style="color:var(--text2);font-size:14px;padding:8px 0 16px">移動先がありません。新しいフォルダを作成してください。</p>`;
-      } else {
-        const rows = allDests.map(d =>
-          `<button class="list-item" style="border-radius:var(--r-sm)"
-            data-action="confirm-move-to-folder"
-            data-cid="${d.fId}" data-pid="${d.pId}" data-sid="${moveSid}"
-            data-src-cid="${srcCid}" data-src-pid="${srcPid}">
-            <span class="list-item-icon" style="color:var(--text2)">${icon(d.fId === '__inbox__' ? 'file' : 'folder', 22)}</span>
-            <span class="list-item-body">
-              <span class="list-item-title">${esc(d.fName)}</span>
-              ${d.fId !== '__inbox__' ? `<span class="list-item-sub">${esc(d.pName)}</span>` : ''}
-            </span>
-          </button>`
-        ).join('');
-        optionsHtml = `<div class="list-group" style="margin:0 0 12px">${rows}</div>`;
-      }
-      openSheet(`
-        <div class="sheet-title">📁 フォルダに移動</div>
-        ${optionsHtml}
-        <button class="btn btn-secondary" data-action="create-folder-and-move"
-          data-sid="${moveSid}" data-src-cid="${srcCid}" data-src-pid="${srcPid}">
-          ＋ 新しいフォルダを作成して移動
-        </button>
-      `);
-      break;
-    }
-
-    // 既存フォルダ・案件に移動を確定
-    case 'confirm-move-to-folder': {
-      const { cid: tCid, pid: tPid, sid: tSid } = el.dataset;
-      const srcCid2 = el.dataset.srcCid;
-      const srcPid2 = el.dataset.srcPid;
-      // 移動元を動的に特定（inboxでも通常フォルダでも対応）
-      const srcProject = srcCid2 === '__inbox__' ? getInboxProject() : getProject(srcCid2, srcPid2);
-      if (!srcProject) return;
-      const idx = srcProject.sessions.findIndex(s => s.id === tSid);
-      if (idx === -1) return;
-      const [movedSession] = srcProject.sessions.splice(idx, 1);
-      // 移動先
-      const targetProject = tCid === '__inbox__' ? getInboxProject() : getProject(tCid, tPid);
-      if (!targetProject) return;
-      targetProject.sessions.push(movedSession);
-      saveData();
-      closeSheet();
-      render();
-      showToast('フォルダに移動しました');
-      break;
-    }
-
-    // 新しいフォルダを作成して移動
-    case 'create-folder-and-move': {
-      const cfSid = el.dataset.sid;
-      const cfSrcCid = el.dataset.srcCid;
-      const cfSrcPid = el.dataset.srcPid;
-      openSheet(`
-        <div class="sheet-title">📁 新しいフォルダに移動</div>
-        <div class="form-group">
-          <label class="form-label">フォルダ名</label>
-          <input class="form-input" type="text" id="new-folder-name" placeholder="例：企業名など">
-        </div>
-        <div class="form-group">
-          <label class="form-label">フォルダ名（任意）</label>
-          <input class="form-input" type="text" id="new-project-name2" placeholder="例：企画名など（省略可）">
-        </div>
-        <button class="btn btn-primary" data-action="save-folder-and-move"
-          data-sid="${cfSid}" data-src-cid="${cfSrcCid}" data-src-pid="${cfSrcPid}">作成して移動</button>
-      `);
-      break;
-    }
-
-    case 'save-folder-and-move': {
-      const sfSid = el.dataset.sid;
-      const sfSrcCid = el.dataset.srcCid;
-      const sfSrcPid = el.dataset.srcPid;
-      const folderName = document.getElementById('new-folder-name')?.value.trim();
-      const projectName = document.getElementById('new-project-name2')?.value.trim() || folderName;
-      if (!folderName) { showToast('フォルダ名を入力してください'); return; }
-
-      const newFolder = { id: uid(), name: folderName, createdAt: new Date().toISOString(),
-        projects: [{ id: uid(), name: projectName, createdAt: new Date().toISOString(), sessions: [] }] };
-      appData.clients.push(newFolder);
-
-      // 移動元を動的に特定
-      const sfSrcProject = sfSrcCid === '__inbox__' ? getInboxProject() : getProject(sfSrcCid, sfSrcPid);
-      if (!sfSrcProject) return;
-      const idx = sfSrcProject.sessions.findIndex(s => s.id === sfSid);
-      if (idx === -1) return;
-      const [movedSession] = sfSrcProject.sessions.splice(idx, 1);
-      newFolder.projects[0].sessions.push(movedSession);
-      saveData();
-      closeSheet();
-      render();
-      showToast('フォルダに移動しました');
-      break;
-    }
-
-    // フォルダ options
-    case 'folder-options': {
-      const fid = el.dataset.id;
-      const folder = getClient(fid);
+    // ── FOLDER ··· MENU ─────────────────────────────────────
+    case 'folder-opts': {
+      const folder = getFolder(fid);
       if (!folder) return;
       openSheet(`
         <div class="sheet-title">${esc(folder.name)}</div>
         <div style="display:flex;flex-direction:column;gap:10px">
-          <button class="btn btn-secondary" data-action="move-folder-to-folder" data-id="${fid}">📁 フォルダに移動（統合）</button>
-          <button class="btn btn-secondary" data-action="rename-folder" data-id="${fid}">名前を変更</button>
-          <button class="btn btn-secondary" style="color:var(--danger)" data-action="delete-folder" data-id="${fid}">削除する</button>
+          <button class="btn btn-secondary" data-action="move-folder" data-fid="${fid}">📁 移動</button>
+          <button class="btn btn-secondary" data-action="rename-folder" data-fid="${fid}">名前を変更</button>
+          <button class="btn btn-secondary" style="color:var(--danger)" data-action="delete-folder" data-fid="${fid}">削除する</button>
         </div>
       `);
       break;
     }
 
-    case 'move-folder-to-folder': {
-      const srcFid = el.dataset.id;
-      const destFolders = getFolders().filter(f => f.id !== srcFid);
-      let destHtml = '';
-      if (destFolders.length === 0) {
-        destHtml = `<p style="color:var(--text2);font-size:14px;padding:8px 0 16px">移動先のフォルダがありません。</p>`;
-      } else {
-        const rows = destFolders.map(f =>
-          `<button class="list-item" style="border-radius:var(--r-sm)"
-            data-action="confirm-move-folder"
-            data-src-id="${srcFid}" data-dst-id="${f.id}">
-            <span class="list-item-icon" style="color:var(--text2)">${icon('folder', 22)}</span>
-            <span class="list-item-body">
-              <span class="list-item-title">${esc(f.name)}</span>
-              <span class="list-item-sub">フォルダ ${f.projects.length}件</span>
-            </span>
-          </button>`
-        ).join('');
-        destHtml = `<div class="list-group" style="margin:0 0 12px">${rows}</div>`;
-      }
+    case 'move-folder': {
+      const moveFid  = fid;
+      const folder   = getFolder(moveFid);
+      if (!folder) return;
+      const curParent = folder.parentId || null;
+
+      // Root option
+      const rootCurrent = !curParent;
+      let pickerHtml = `<button class="list-item" style="border-radius:var(--r-sm)"
+        data-action="confirm-move-folder" data-fid="${moveFid}" data-target-fid="">
+        <span class="list-item-icon" style="color:var(--text2);margin-right:8px">${icon('home', 18)}</span>
+        <span class="list-item-body"><span class="list-item-title">トップレベル</span></span>
+        ${rootCurrent ? '<span style="color:var(--primary);font-size:12px;flex-shrink:0">現在地</span>' : ''}
+      </button>`;
+      pickerHtml += buildFolderPickerHtml('confirm-move-folder', `data-fid="${moveFid}"`, moveFid, curParent);
+
       openSheet(`
-        <div class="sheet-title">📁 フォルダに統合</div>
-        <p style="color:var(--text2);font-size:13px;margin-bottom:12px">中のフォルダごと移動先に統合されます</p>
-        ${destHtml}
+        <div class="sheet-title">📁 移動先を選択</div>
+        <div class="list-group" style="margin:0">${pickerHtml}</div>
       `);
       break;
     }
 
     case 'confirm-move-folder': {
-      const srcFid = el.dataset.srcId;
-      const dstFid = el.dataset.dstId;
-      const srcFolder = getClient(srcFid);
-      const dstFolder = getClient(dstFid);
-      if (!srcFolder || !dstFolder) return;
-      // 中の全プロジェクトを移動先に移す
-      dstFolder.projects.push(...srcFolder.projects);
-      appData.clients = appData.clients.filter(c => c.id !== srcFid);
+      const moveFid    = fid;
+      const targetFid  = el.dataset.targetFid || null;  // '' means top level
+      const folder     = getFolder(moveFid);
+      if (!folder) return;
+
+      // Cycle detection
+      if (targetFid && (targetFid === moveFid || isFolderDescendantOf(targetFid, moveFid))) {
+        showToast('自分自身または子フォルダには移動できません');
+        return;
+      }
+
+      folder.parentId = targetFid || null;
       saveData();
       closeSheet();
-      navStack = [{ view: 'home' }];
       render();
-      showToast('フォルダを統合しました');
+      showToast('移動しました');
       break;
     }
 
     case 'rename-folder': {
-      const fid = el.dataset.id;
-      const folder = getClient(fid);
+      const folder = getFolder(fid);
       if (!folder) return;
       openSheet(`
         <div class="sheet-title">フォルダ名を変更</div>
@@ -1842,7 +1571,7 @@ function handleAction(action, el) {
           <label class="form-label">フォルダ名</label>
           <input class="form-input" type="text" id="rename-folder-input" value="${esc(folder.name)}">
         </div>
-        <button class="btn btn-primary" data-action="save-rename-folder" data-id="${fid}">保存</button>
+        <button class="btn btn-primary" data-action="save-rename-folder" data-fid="${fid}">保存</button>
       `);
       setTimeout(() => {
         const input = document.getElementById('rename-folder-input');
@@ -1852,8 +1581,7 @@ function handleAction(action, el) {
     }
 
     case 'save-rename-folder': {
-      const fid = el.dataset.id;
-      const folder = getClient(fid);
+      const folder = getFolder(fid);
       if (!folder) return;
       const name = document.getElementById('rename-folder-input')?.value.trim();
       if (!name) { showToast('名前を入力してください'); return; }
@@ -1866,153 +1594,78 @@ function handleAction(action, el) {
     }
 
     case 'delete-folder': {
-      const fid = el.dataset.id;
-      const folder = getClient(fid);
+      const folder = getFolder(fid);
       if (!folder) return;
       showConfirm(
         `「${folder.name}」を削除しますか？`,
         '中のフォルダ・収録データもすべて削除されます。',
         () => {
-          appData.clients = appData.clients.filter(c => c.id !== fid);
+          const toDelete = new Set([fid, ...getFolderDescendants(fid)]);
+          appData.folders  = appData.folders.filter(f => !toDelete.has(f.id));
+          appData.sessions = appData.sessions.filter(s => !toDelete.has(s.folderId));
           saveData();
-          closeSheet();
-          render();
+          // If currently viewing this folder, go back
+          const frame = currentFrame();
+          if (frame.view === 'folder' && frame.folderId === fid) goBack();
+          else render();
           showToast('削除しました');
         }
       );
       break;
     }
 
-    // 案件 options
-    case 'project-options': {
-      const project = getProject(cid, pid);
-      if (!project) return;
-      openSheet(`
-        <div class="sheet-title">${esc(project.name)}</div>
-        <div style="display:flex;flex-direction:column;gap:10px">
-          <button class="btn btn-secondary" data-action="move-project-to-folder"
-            data-cid="${cid}" data-pid="${pid}">📁 フォルダに移動</button>
-          <button class="btn btn-secondary" data-action="rename-project" data-cid="${cid}" data-pid="${pid}">名前を変更</button>
-          <button class="btn btn-secondary" style="color:var(--danger)" data-action="delete-project" data-cid="${cid}" data-pid="${pid}">削除する</button>
-        </div>
-      `);
-      break;
-    }
-
-    case 'move-project-to-folder': {
-      const movePid = pid;
-      const srcCidP = cid;
-      const destFolders = getFolders().filter(f => f.id !== srcCidP);
-      let destHtml = '';
-      if (destFolders.length === 0) {
-        destHtml = `<p style="color:var(--text2);font-size:14px;padding:8px 0 16px">移動先のフォルダがありません。</p>`;
-      } else {
-        const rows = destFolders.map(f =>
-          `<button class="list-item" style="border-radius:var(--r-sm)"
-            data-action="confirm-move-project"
-            data-src-cid="${srcCidP}" data-pid="${movePid}" data-cid="${f.id}">
-            <span class="list-item-icon" style="color:var(--text2)">${icon('folder', 22)}</span>
-            <span class="list-item-body">
-              <span class="list-item-title">${esc(f.name)}</span>
-              <span class="list-item-sub">フォルダ ${f.projects.length}件</span>
-            </span>
-          </button>`
-        ).join('');
-        destHtml = `<div class="list-group" style="margin:0 0 12px">${rows}</div>`;
-      }
-      openSheet(`
-        <div class="sheet-title">📁 フォルダに移動</div>
-        ${destHtml}
-      `);
-      break;
-    }
-
-    case 'confirm-move-project': {
-      const srcCidP2 = el.dataset.srcCid;
-      const movePid2 = el.dataset.pid;
-      const tgtCid = el.dataset.cid;
-      const srcFolder = getClient(srcCidP2);
-      const tgtFolder = getClient(tgtCid);
-      if (!srcFolder || !tgtFolder) return;
-      const projIdx = srcFolder.projects.findIndex(p => p.id === movePid2);
-      if (projIdx === -1) return;
-      const [movedProj] = srcFolder.projects.splice(projIdx, 1);
-      tgtFolder.projects.push(movedProj);
-      saveData();
-      closeSheet();
-      render();
-      showToast('フォルダに移動しました');
-      break;
-    }
-
-    case 'rename-project': {
-      const project = getProject(cid, pid);
-      if (!project) return;
-      openSheet(`
-        <div class="sheet-title">フォルダ名を変更</div>
-        <div class="form-group">
-          <label class="form-label">フォルダ名</label>
-          <input class="form-input" type="text" id="rename-project-input" value="${esc(project.name)}">
-        </div>
-        <button class="btn btn-primary" data-action="save-rename-project" data-cid="${cid}" data-pid="${pid}">保存</button>
-      `);
-      setTimeout(() => {
-        const input = document.getElementById('rename-project-input');
-        if (input) { input.focus(); input.select(); }
-      }, 300);
-      break;
-    }
-
-    case 'save-rename-project': {
-      const project = getProject(cid, pid);
-      if (!project) return;
-      const name = document.getElementById('rename-project-input')?.value.trim();
-      if (!name) { showToast('名前を入力してください'); return; }
-      project.name = name;
-      saveData();
-      closeSheet();
-      render();
-      showToast('名前を変更しました');
-      break;
-    }
-
-    case 'delete-project': {
-      const client = getClient(cid);
-      const project = getProject(cid, pid);
-      if (!client || !project) return;
-      showConfirm(
-        `「${project.name}」を削除しますか？`,
-        '中の収録データもすべて削除されます。',
-        () => {
-          client.projects = client.projects.filter(p => p.id !== pid);
-          saveData();
-          closeSheet();
-          render();
-          showToast('削除しました');
-        }
-      );
-      break;
-    }
-
-    // 収録 options
-    case 'session-options': {
-      const session = getSession(cid, pid, sid);
+    // ── SESSION ··· MENU ─────────────────────────────────────
+    case 'session-opts': {
+      const session = getSessionById(sid);
       if (!session) return;
-      const sessionTitle = session.name || `第${session.number}回収録`;
+      const title = session.name || `第${session.number}回収録`;
       openSheet(`
-        <div class="sheet-title">${sessionTitle}</div>
+        <div class="sheet-title">${esc(title)}</div>
         <div style="display:flex;flex-direction:column;gap:10px">
-          <button class="btn btn-secondary" data-action="move-to-folder"
-            data-sid="${sid}" data-src-cid="${cid}" data-src-pid="${pid}">📁 フォルダに移動</button>
-          <button class="btn btn-secondary" data-action="rename-session" data-cid="${cid}" data-pid="${pid}" data-sid="${sid}">名前を変更</button>
-          <button class="btn btn-secondary" style="color:var(--danger)" data-action="delete-session" data-cid="${cid}" data-pid="${pid}" data-sid="${sid}">削除する</button>
+          <button class="btn btn-secondary" data-action="move-session" data-sid="${sid}">📁 移動</button>
+          <button class="btn btn-secondary" data-action="rename-session" data-sid="${sid}">名前を変更</button>
+          <button class="btn btn-secondary" style="color:var(--danger)" data-action="delete-session" data-sid="${sid}">削除する</button>
         </div>
       `);
+      break;
+    }
+
+    case 'move-session': {
+      const session = getSessionById(sid);
+      if (!session) return;
+      const curFid = session.folderId || null;
+
+      // Unfiled option
+      const unfiledCurrent = !curFid;
+      let pickerHtml = `<button class="list-item" style="border-radius:var(--r-sm)"
+        data-action="confirm-move-session" data-sid="${sid}" data-target-fid="">
+        <span class="list-item-icon" style="color:var(--text2);margin-right:8px">${icon('file', 18)}</span>
+        <span class="list-item-body"><span class="list-item-title">未分類</span></span>
+        ${unfiledCurrent ? '<span style="color:var(--primary);font-size:12px;flex-shrink:0">現在地</span>' : ''}
+      </button>`;
+      pickerHtml += buildFolderPickerHtml('confirm-move-session', `data-sid="${sid}"`, null, curFid);
+
+      openSheet(`
+        <div class="sheet-title">📁 移動先を選択</div>
+        <div class="list-group" style="margin:0">${pickerHtml}</div>
+      `);
+      break;
+    }
+
+    case 'confirm-move-session': {
+      const session = getSessionById(sid);
+      if (!session) return;
+      const targetFid = el.dataset.targetFid || null;
+      session.folderId = targetFid || null;
+      saveData();
+      closeSheet();
+      render();
+      showToast('移動しました');
       break;
     }
 
     case 'rename-session': {
-      const session = getSession(cid, pid, sid);
+      const session = getSessionById(sid);
       if (!session) return;
       openSheet(`
         <div class="sheet-title">収録名を変更</div>
@@ -2021,8 +1674,7 @@ function handleAction(action, el) {
           <input class="form-input" type="text" id="rename-session-input"
             value="${esc(session.name || '')}" placeholder="第${session.number}回収録">
         </div>
-        <button class="btn btn-primary" data-action="save-rename-session"
-          data-cid="${cid}" data-pid="${pid}" data-sid="${sid}">保存</button>
+        <button class="btn btn-primary" data-action="save-rename-session" data-sid="${sid}">保存</button>
       `);
       setTimeout(() => {
         const input = document.getElementById('rename-session-input');
@@ -2032,7 +1684,7 @@ function handleAction(action, el) {
     }
 
     case 'save-rename-session': {
-      const session = getSession(cid, pid, sid);
+      const session = getSessionById(sid);
       if (!session) return;
       const name = document.getElementById('rename-session-input')?.value.trim();
       session.name = name || '';
@@ -2044,32 +1696,30 @@ function handleAction(action, el) {
     }
 
     case 'delete-session': {
-      const project = getProject(cid, pid);
-      const session = getSession(cid, pid, sid);
-      if (!project || !session) return;
+      const session = getSessionById(sid);
+      if (!session) return;
       showConfirm(
         `第${session.number}回収録を削除しますか？`,
         'この収録のすべてのログが削除されます。',
         () => {
-          project.sessions = project.sessions.filter(s => s.id !== sid);
+          appData.sessions = appData.sessions.filter(s => s.id !== sid);
           saveData();
-          closeSheet();
           goBack();
           showToast('削除しました');
         }
       );
       break;
     }
-
   }
 }
 
-function buildLogFromForm(type, startOffset, isMissed) {
-  // Read duration from form
-  let duration = formState.duration;
+// ============================================================
+// BUILD LOG FROM FORM
+// ============================================================
+function buildLogFromForm(type, startOffset, isMissed, session) {
+  let duration     = formState.duration;
   let durationMode = formState.durationMode;
 
-  // Check custom input
   const customMin = document.getElementById('custom-min');
   const customSec = document.getElementById('custom-sec');
   if (customMin && customSec) {
@@ -2077,31 +1727,21 @@ function buildLogFromForm(type, startOffset, isMissed) {
     const sVal = customSec.value.trim();
     if (mVal !== '' || sVal !== '') {
       const d = (parseInt(mVal)||0)*60 + (parseInt(sVal)||0);
-      if (d > 0) {
-        duration = d;
-        durationMode = 'custom';
-      }
+      if (d > 0) { duration = d; durationMode = 'custom'; }
     }
   }
 
-  // For types that don't have duration
   if (type === 'talk' || type === 'trouble') {
-    duration = null;
-    durationMode = 'auto';
+    duration = null; durationMode = 'auto';
   }
 
-  // Memo / filename
-  const memo = document.getElementById('f-memo')?.value.trim() || '';
+  const memo     = document.getElementById('f-memo')?.value.trim() || '';
   const filename = document.getElementById('f-filename')?.value.trim() || '';
 
-  // Trouble fields
-  let troubleCategory = formState.troubleCategory;
+  let troubleCategory    = formState.troubleCategory;
   let troubleSubcategory = formState.troubleSubcategory;
   const equipDetail = document.getElementById('f-equipment-detail');
   if (equipDetail) troubleSubcategory = equipDetail.value.trim();
-
-  const frame = currentFrame();
-  const session = frame.sessionId ? getSession(frame.clientId, frame.projectId, frame.sessionId) : null;
 
   const videoNumber = type === 'video' && session ? nextVideoNumber(session) : null;
 
@@ -2116,25 +1756,27 @@ function buildLogFromForm(type, startOffset, isMissed) {
     memo,
     troubleCategory,
     troubleSubcategory,
-    photos: [...formState.photos],
+    photos: [...(formState.photos || [])],
     isMissed,
     createdAt: Date.now(),
   };
 }
 
+// ============================================================
+// SAVE EDITED LOG
+// ============================================================
 function saveEditedLog() {
   const ctx = formState._editContext;
   if (!ctx) return;
-  const session = getSession(ctx.clientId, ctx.projectId, ctx.sessionId);
+  const session = getSessionById(ctx.sessionId);
   if (!session) return;
   const log = session.logs.find(l => l.id === ctx.logId);
   if (!log) return;
 
-  // Duration
-  let duration = formState.duration;
+  let duration     = formState.duration;
   let durationMode = formState.durationMode;
-  const customMin = document.getElementById('custom-min');
-  const customSec = document.getElementById('custom-sec');
+  const customMin  = document.getElementById('custom-min');
+  const customSec  = document.getElementById('custom-sec');
   if (customMin && customSec) {
     const mVal = customMin.value.trim();
     const sVal = customSec.value.trim();
@@ -2145,14 +1787,16 @@ function saveEditedLog() {
   }
   if (log.type === 'talk' || log.type === 'trouble') { duration = null; durationMode = 'auto'; }
 
-  log.duration = duration;
+  log.duration     = duration;
   log.durationMode = durationMode;
-  log.memo = document.getElementById('f-memo')?.value.trim() || log.memo;
-  log.filename = document.getElementById('f-filename')?.value.trim() || log.filename;
+  log.memo         = document.getElementById('f-memo')?.value.trim()      || log.memo;
+  log.filename     = document.getElementById('f-filename')?.value.trim()  || log.filename;
   log.troubleCategory = formState.troubleCategory || log.troubleCategory;
-  const equipDetail = document.getElementById('f-equipment-detail');
-  log.troubleSubcategory = equipDetail ? equipDetail.value.trim() : (formState.troubleSubcategory || log.troubleSubcategory);
-  log.photos = [...formState.photos];
+  const equipDetail   = document.getElementById('f-equipment-detail');
+  log.troubleSubcategory = equipDetail
+    ? equipDetail.value.trim()
+    : (formState.troubleSubcategory || log.troubleSubcategory);
+  log.photos = [...(formState.photos || [])];
 
   saveData();
   closeSheet();
@@ -2164,25 +1808,27 @@ function saveEditedLog() {
 // IMPORT
 // ============================================================
 function handleImport(data) {
-  if (!data.session || !data.project || !data.client) {
-    showToast('不正なデータ形式です'); return;
+  // Support both v1 and v2 export formats
+  let importSession = null;
+  if (data.version === 2 && data.session) {
+    importSession = data.session;
+  } else if (data.session) {
+    importSession = data.session;
   }
+  if (!importSession) { showToast('不正なデータ形式です'); return; }
+
   openSheet(`
     <div class="sheet-title">📥 インポート</div>
     <div style="margin-bottom:16px;color:var(--text2);font-size:14px">
-      <b style="color:var(--text)">${esc(data.client.name)}</b> /
-      <b style="color:var(--text)">${esc(data.project.name)}</b><br>
-      第${data.session.number}回収録 (${data.session.date})<br>
-      ${data.session.logs.length}件の記録
+      第${importSession.number}回収録 (${importSession.date})<br>
+      ${importSession.logs.length}件の記録
     </div>
     <div class="form-group">
-      <label class="form-label">保存先</label>
+      <label class="form-label">保存先フォルダ</label>
       <select class="form-select" id="import-dest">
-        <option value="new-client">新しいクライアントとして保存</option>
-        ${appData.clients.map(c =>
-          c.projects.map(p =>
-            `<option value="${c.id}|${p.id}">${esc(c.name)} / ${esc(p.name)}</option>`
-          ).join('')
+        <option value="">未分類</option>
+        ${appData.folders.map(f =>
+          `<option value="${f.id}">${esc(f.name)}</option>`
         ).join('')}
       </select>
     </div>
@@ -2190,28 +1836,9 @@ function handleImport(data) {
   `);
 
   document.getElementById('import-confirm-btn').onclick = () => {
-    const dest = document.getElementById('import-dest')?.value;
-    if (dest === 'new-client') {
-      let client = appData.clients.find(c => c.name === data.client.name);
-      if (!client) {
-        client = { id: uid(), name: data.client.name, createdAt: new Date().toISOString(), projects: [] };
-        appData.clients.push(client);
-      }
-      let project = client.projects.find(p => p.name === data.project.name);
-      if (!project) {
-        project = { id: uid(), name: data.project.name, createdAt: new Date().toISOString(), sessions: [] };
-        client.projects.push(project);
-      }
-      const session = { ...data.session, id: uid() };
-      project.sessions.push(session);
-    } else {
-      const [cid, pid] = dest.split('|');
-      const project = getProject(cid, pid);
-      if (project) {
-        const session = { ...data.session, id: uid() };
-        project.sessions.push(session);
-      }
-    }
+    const destFid   = document.getElementById('import-dest')?.value || null;
+    const newSession = { ...importSession, id: uid(), folderId: destFid || null };
+    appData.sessions.push(newSession);
     saveData();
     closeSheet();
     goHome();
@@ -2224,8 +1851,8 @@ function handleImport(data) {
 // ============================================================
 function downloadFile(content, filename, mimeType) {
   const blob = new Blob(['﻿'+content], { type: mimeType+';charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
   a.href = url; a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
@@ -2263,7 +1890,6 @@ document.addEventListener('click', e => {
   if (!seg) return;
   seg.querySelectorAll('.segment-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
-  // Show/hide timecode row
   if (seg.id === 'time-base-seg') {
     const tcRow = document.getElementById('timecode-row');
     if (tcRow) tcRow.style.display = btn.dataset.val === 'timecode' ? 'block' : 'none';
@@ -2288,6 +1914,7 @@ document.addEventListener('change', e => {
     files.forEach(file => {
       const reader = new FileReader();
       reader.onload = ev => {
+        formState.photos = formState.photos || [];
         formState.photos.push(ev.target.result);
         const row = document.getElementById('photo-row');
         if (row) {
@@ -2308,10 +1935,7 @@ document.addEventListener('change', e => {
 
 // Close sheet on overlay tap
 document.getElementById('overlay').addEventListener('click', () => {
-  // Only close if not recording (prevent accidental dismiss)
-  const frame = currentFrame();
-  if (frame.view !== 'recording') closeSheet();
-  else closeSheet();
+  closeSheet();
 });
 
 // ============================================================
