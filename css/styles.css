@@ -659,7 +659,8 @@ textarea.form-input {
 
 .log-entry-time {
   font-size: 12px;
-  color: var(--text3);
+  color: var(--text);
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
   font-family: 'SF Mono', 'Courier New', monospace;
   flex-shrink: 0;
@@ -687,11 +688,8 @@ textarea.form-input {
 }
 .log-entry-trouble .log-entry-type { color: var(--danger); }
 
-.log-entry-missed .log-entry-type::after {
-  content: ' ※忘れ';
-  font-size: 11px;
+.log-entry-missed .log-entry-time {
   color: var(--c-missed);
-  font-weight: 400;
 }
 
 /* Recording button grid */

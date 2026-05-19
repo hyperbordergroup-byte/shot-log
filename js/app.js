@@ -1779,10 +1779,56 @@ function handleAction(action, el) {
       openSheet(`
         <div class="sheet-title">${esc(folder.name)}</div>
         <div style="display:flex;flex-direction:column;gap:10px">
+          <button class="btn btn-secondary" data-action="move-folder-to-folder" data-id="${fid}">📁 フォルダに移動（統合）</button>
           <button class="btn btn-secondary" data-action="rename-folder" data-id="${fid}">名前を変更</button>
           <button class="btn btn-secondary" style="color:var(--danger)" data-action="delete-folder" data-id="${fid}">削除する</button>
         </div>
       `);
+      break;
+    }
+
+    case 'move-folder-to-folder': {
+      const srcFid = el.dataset.id;
+      const destFolders = getFolders().filter(f => f.id !== srcFid);
+      let destHtml = '';
+      if (destFolders.length === 0) {
+        destHtml = `<p style="color:var(--text2);font-size:14px;padding:8px 0 16px">移動先のフォルダがありません。</p>`;
+      } else {
+        const rows = destFolders.map(f =>
+          `<button class="list-item" style="border-radius:var(--r-sm)"
+            data-action="confirm-move-folder"
+            data-src-id="${srcFid}" data-dst-id="${f.id}">
+            <span class="list-item-icon" style="color:var(--text2)">${icon('folder', 22)}</span>
+            <span class="list-item-body">
+              <span class="list-item-title">${esc(f.name)}</span>
+              <span class="list-item-sub">フォルダ ${f.projects.length}件</span>
+            </span>
+          </button>`
+        ).join('');
+        destHtml = `<div class="list-group" style="margin:0 0 12px">${rows}</div>`;
+      }
+      openSheet(`
+        <div class="sheet-title">📁 フォルダに統合</div>
+        <p style="color:var(--text2);font-size:13px;margin-bottom:12px">中のフォルダごと移動先に統合されます</p>
+        ${destHtml}
+      `);
+      break;
+    }
+
+    case 'confirm-move-folder': {
+      const srcFid = el.dataset.srcId;
+      const dstFid = el.dataset.dstId;
+      const srcFolder = getClient(srcFid);
+      const dstFolder = getClient(dstFid);
+      if (!srcFolder || !dstFolder) return;
+      // 中の全プロジェクトを移動先に移す
+      dstFolder.projects.push(...srcFolder.projects);
+      appData.clients = appData.clients.filter(c => c.id !== srcFid);
+      saveData();
+      closeSheet();
+      navStack = [{ view: 'home' }];
+      render();
+      showToast('フォルダを統合しました');
       break;
     }
 
