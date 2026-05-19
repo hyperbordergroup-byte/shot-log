@@ -1386,8 +1386,8 @@ function handleAction(action, el) {
     case 'add-missed-log': {
       const session = getSession(cid, pid, sid);
       if (!session) return;
+      openMissedForm(session); // openMissedForm が formState を上書きするので必ず後で設定
       formState._editContext = { clientId: cid, projectId: pid, sessionId: sid };
-      openMissedForm(session);
       break;
     }
 
@@ -1780,7 +1780,7 @@ function handleAction(action, el) {
         <div class="sheet-title">${esc(folder.name)}</div>
         <div style="display:flex;flex-direction:column;gap:10px">
           <button class="btn btn-secondary" data-action="rename-folder" data-id="${fid}">名前を変更</button>
-          <button class="btn btn-secondary" style="color:var(--danger)" data-action="delete-folder" data-id="${fid}">削除</button>
+          <button class="btn btn-secondary" style="color:var(--danger)" data-action="delete-folder" data-id="${fid}">削除する</button>
         </div>
       `);
       break;
@@ -1844,10 +1844,58 @@ function handleAction(action, el) {
       openSheet(`
         <div class="sheet-title">${esc(project.name)}</div>
         <div style="display:flex;flex-direction:column;gap:10px">
+          <button class="btn btn-secondary" data-action="move-project-to-folder"
+            data-cid="${cid}" data-pid="${pid}">📁 フォルダに移動</button>
           <button class="btn btn-secondary" data-action="rename-project" data-cid="${cid}" data-pid="${pid}">名前を変更</button>
-          <button class="btn btn-secondary" style="color:var(--danger)" data-action="delete-project" data-cid="${cid}" data-pid="${pid}">削除</button>
+          <button class="btn btn-secondary" style="color:var(--danger)" data-action="delete-project" data-cid="${cid}" data-pid="${pid}">削除する</button>
         </div>
       `);
+      break;
+    }
+
+    case 'move-project-to-folder': {
+      const movePid = pid;
+      const srcCidP = cid;
+      const destFolders = getFolders().filter(f => f.id !== srcCidP);
+      let destHtml = '';
+      if (destFolders.length === 0) {
+        destHtml = `<p style="color:var(--text2);font-size:14px;padding:8px 0 16px">移動先のフォルダがありません。</p>`;
+      } else {
+        const rows = destFolders.map(f =>
+          `<button class="list-item" style="border-radius:var(--r-sm)"
+            data-action="confirm-move-project"
+            data-src-cid="${srcCidP}" data-pid="${movePid}" data-cid="${f.id}">
+            <span class="list-item-icon" style="color:var(--text2)">${icon('folder', 22)}</span>
+            <span class="list-item-body">
+              <span class="list-item-title">${esc(f.name)}</span>
+              <span class="list-item-sub">フォルダ ${f.projects.length}件</span>
+            </span>
+          </button>`
+        ).join('');
+        destHtml = `<div class="list-group" style="margin:0 0 12px">${rows}</div>`;
+      }
+      openSheet(`
+        <div class="sheet-title">📁 フォルダに移動</div>
+        ${destHtml}
+      `);
+      break;
+    }
+
+    case 'confirm-move-project': {
+      const srcCidP2 = el.dataset.srcCid;
+      const movePid2 = el.dataset.pid;
+      const tgtCid = el.dataset.cid;
+      const srcFolder = getClient(srcCidP2);
+      const tgtFolder = getClient(tgtCid);
+      if (!srcFolder || !tgtFolder) return;
+      const projIdx = srcFolder.projects.findIndex(p => p.id === movePid2);
+      if (projIdx === -1) return;
+      const [movedProj] = srcFolder.projects.splice(projIdx, 1);
+      tgtFolder.projects.push(movedProj);
+      saveData();
+      closeSheet();
+      render();
+      showToast('フォルダに移動しました');
       break;
     }
 
