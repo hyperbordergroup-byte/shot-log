@@ -358,7 +358,7 @@ function renderHome() {
         <button class="list-item" data-action="open-inbox-session" data-sid="${s.id}">
           <span class="list-item-icon" style="color:${isRec ? 'var(--danger)' : 'var(--text2)'}">${isRec ? icon('record', 16) : icon('file', 22)}</span>
           <span class="list-item-body">
-            <span class="list-item-title">第${s.number}回収録${isRec ? ' <span style="color:var(--danger);font-size:12px">REC中</span>' : ''}</span>
+            <span class="list-item-title">${s.name || `第${s.number}回収録`}${isRec ? ' <span style="color:var(--danger);font-size:12px">REC中</span>' : ''}</span>
             <span class="list-item-sub">${s.date}・${s.logs.length}件 動画${sum.videoCount}本</span>
           </span>
           <span class="list-item-chevron">›</span>
@@ -480,7 +480,7 @@ function renderSessionList() {
               data-cid="${clientId}" data-pid="${projectId}" data-sid="${s.id}">
             <span class="list-item-icon" style="color:${isRec ? 'var(--danger)' : 'var(--text2)'}">${isRec ? icon('record', 16) : icon('file', 22)}</span>
             <span class="list-item-body">
-              <span class="list-item-title">第${s.number}回収録${isRec ? ' <span style="color:var(--danger);font-size:12px">REC中</span>' : ''}</span>
+              <span class="list-item-title">${s.name || `第${s.number}回収録`}${isRec ? ' <span style="color:var(--danger);font-size:12px">REC中</span>' : ''}</span>
               <span class="list-item-sub">${s.date}・${s.logs.length}件 動画${summary.videoCount}本</span>
             </span>
             <span class="list-item-chevron">›</span>
@@ -652,6 +652,11 @@ function renderRecording() {
         <span class="rec-btn-emoji">${icon('list', 26)}</span>
         <span class="rec-btn-label">その他</span>
       </button>
+      <button class="rec-btn rec-btn-missed" data-action="tap-missed-log"
+        data-cid="${clientId}" data-pid="${projectId}" data-sid="${sessionId}">
+        <span class="rec-btn-emoji">${icon('clock', 22)}</span>
+        <span class="rec-btn-label">入力忘れ</span>
+      </button>
     </div>
   </div>`;
 }
@@ -702,7 +707,7 @@ function renderSessionReview() {
 
   return `<div class="header">
     <button class="header-btn" data-action="back">‹</button>
-    <span class="header-title">第${session.number}回収録</span>
+    <span class="header-title">${session.name || `第${session.number}回収録`}</span>
     <button class="header-action" data-action="go-export"
       data-cid="${clientId}" data-pid="${projectId}" data-sid="${sessionId}">出力</button>
   </div>
@@ -1059,13 +1064,24 @@ function openMissedForm(session) {
     <div class="sheet-title">入力し忘れを追加</div>
 
     <div class="form-group">
-      <label class="form-label">大まかな時間</label>
+      <label class="form-label">タイム（発生した時間）</label>
       <div class="timecode-input">
         <input type="number" id="missed-h" placeholder="0" min="0">
         <span class="sep">:</span>
         <input type="number" id="missed-m" placeholder="00" min="0" max="59">
         <span class="sep">:</span>
         <input type="number" id="missed-s" placeholder="00" min="0" max="59">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">所要時間（任意）</label>
+      <div class="timecode-input">
+        <input type="number" id="missed-dur-h" placeholder="0" min="0">
+        <span class="sep">:</span>
+        <input type="number" id="missed-dur-m" placeholder="00" min="0" max="59">
+        <span class="sep">:</span>
+        <input type="number" id="missed-dur-s" placeholder="00" min="0" max="59">
       </div>
     </div>
 
@@ -1366,6 +1382,7 @@ function handleAction(action, el) {
     }
 
     // Add missed log
+    case 'tap-missed-log':
     case 'add-missed-log': {
       const session = getSession(cid, pid, sid);
       if (!session) return;
@@ -1386,12 +1403,17 @@ function handleAction(action, el) {
       const type = formState.selectedType || 'other';
       const memo = document.getElementById('f-memo')?.value.trim() || '';
 
+      const dh = parseInt(document.getElementById('missed-dur-h')?.value) || 0;
+      const dm = parseInt(document.getElementById('missed-dur-m')?.value) || 0;
+      const ds = parseInt(document.getElementById('missed-dur-s')?.value) || 0;
+      const durSec = dh * 3600 + dm * 60 + ds;
+
       const log = {
         id: uid(),
         type,
         startOffset: Math.max(0, startOffset),
-        duration: null,
-        durationMode: 'unknown',
+        duration: durSec > 0 ? durSec : null,
+        durationMode: durSec > 0 ? 'preset' : 'unknown',
         videoNumber: type === 'video' ? nextVideoNumber(session) : null,
         filename: '',
         memo,
@@ -1697,20 +1719,6 @@ function handleAction(action, el) {
       targetProject.sessions.push(movedSession);
       saveData();
       closeSheet();
-      // 移動先に応じてnavStackをクリーンに再構築
-      if (tCid === '__inbox__') {
-        navStack = [
-          { view: 'home' },
-          { view: 'session-review', clientId: '__inbox__', projectId: '__inbox__', sessionId: tSid },
-        ];
-      } else {
-        navStack = [
-          { view: 'home' },
-          { view: 'project-list', clientId: tCid },
-          { view: 'session-list', clientId: tCid, projectId: tPid },
-          { view: 'session-review', clientId: tCid, projectId: tPid, sessionId: tSid },
-        ];
-      }
       render();
       showToast('フォルダに移動しました');
       break;
@@ -1758,14 +1766,6 @@ function handleAction(action, el) {
       newFolder.projects[0].sessions.push(movedSession);
       saveData();
       closeSheet();
-      // navStackをクリーンに再構築
-      const nfCid = newFolder.id, nfPid = newFolder.projects[0].id;
-      navStack = [
-        { view: 'home' },
-        { view: 'project-list', clientId: nfCid },
-        { view: 'session-list', clientId: nfCid, projectId: nfPid },
-        { view: 'session-review', clientId: nfCid, projectId: nfPid, sessionId: sfSid },
-      ];
       render();
       showToast('フォルダに移動しました');
       break;
@@ -1904,14 +1904,48 @@ function handleAction(action, el) {
     case 'session-options': {
       const session = getSession(cid, pid, sid);
       if (!session) return;
+      const sessionTitle = session.name || `第${session.number}回収録`;
       openSheet(`
-        <div class="sheet-title">第${session.number}回収録</div>
+        <div class="sheet-title">${sessionTitle}</div>
         <div style="display:flex;flex-direction:column;gap:10px">
           <button class="btn btn-secondary" data-action="move-to-folder"
             data-sid="${sid}" data-src-cid="${cid}" data-src-pid="${pid}">📁 フォルダに移動</button>
-          <button class="btn btn-secondary" style="color:var(--danger)" data-action="delete-session" data-cid="${cid}" data-pid="${pid}" data-sid="${sid}">削除</button>
+          <button class="btn btn-secondary" data-action="rename-session" data-cid="${cid}" data-pid="${pid}" data-sid="${sid}">名前を変更</button>
+          <button class="btn btn-secondary" style="color:var(--danger)" data-action="delete-session" data-cid="${cid}" data-pid="${pid}" data-sid="${sid}">削除する</button>
         </div>
       `);
+      break;
+    }
+
+    case 'rename-session': {
+      const session = getSession(cid, pid, sid);
+      if (!session) return;
+      openSheet(`
+        <div class="sheet-title">収録名を変更</div>
+        <div class="form-group">
+          <label class="form-label">収録名</label>
+          <input class="form-input" type="text" id="rename-session-input"
+            value="${esc(session.name || '')}" placeholder="第${session.number}回収録">
+        </div>
+        <button class="btn btn-primary" data-action="save-rename-session"
+          data-cid="${cid}" data-pid="${pid}" data-sid="${sid}">保存</button>
+      `);
+      setTimeout(() => {
+        const input = document.getElementById('rename-session-input');
+        if (input) { input.focus(); input.select(); }
+      }, 300);
+      break;
+    }
+
+    case 'save-rename-session': {
+      const session = getSession(cid, pid, sid);
+      if (!session) return;
+      const name = document.getElementById('rename-session-input')?.value.trim();
+      session.name = name || '';
+      saveData();
+      closeSheet();
+      render();
+      showToast('名前を変更しました');
       break;
     }
 

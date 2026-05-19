@@ -738,6 +738,9 @@ textarea.form-input {
 .rec-btn[data-type="talk"]    .rec-btn-label { color: var(--c-talk); }
 .rec-btn[data-type="trouble"] .rec-btn-label { color: var(--c-trouble); }
 .rec-btn[data-type="other"]   .rec-btn-label { color: var(--c-other); }
+.rec-btn.rec-btn-missed { grid-column: 1 / -1; min-height: 54px; flex-direction: row; gap: 8px; border-top: 1px solid var(--border); }
+.rec-btn.rec-btn-missed .rec-btn-emoji { color: var(--c-missed); }
+.rec-btn.rec-btn-missed .rec-btn-label { color: var(--c-missed); font-size: 13px; }
 
 /* ============================================================
    SESSION REVIEW
