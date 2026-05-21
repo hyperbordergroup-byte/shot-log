@@ -361,7 +361,7 @@ function renderSessionRow(session) {
       <span class="list-item-icon" style="color:${isRec ? 'var(--danger)' : 'var(--text2)'}">${isRec ? icon('record', 16) : icon('file', 22)}</span>
       <span class="list-item-body">
         <span class="list-item-title">${esc(session.name || `第${session.number}回収録`)}${isRec ? ' <span style="color:var(--danger);font-size:12px">REC中</span>' : ''}</span>
-        <span class="list-item-sub">${session.date}・${session.logs.length}件 動画${sum.videoCount}本</span>
+        <span class="list-item-sub">${esc(session.date)}・${session.logs.length}件 動画${sum.videoCount}本</span>
       </span>
       <span class="list-item-chevron">›</span>
     </button>
@@ -547,7 +547,7 @@ function renderRecording() {
     <div class="header">
       <div class="rec-header-info">
         <div class="rec-header-name">${esc(folderName)} 第${session.number}回</div>
-        <div class="rec-header-sub">${session.date}</div>
+        <div class="rec-header-sub">${esc(session.date)}</div>
       </div>
       <button class="stop-btn" data-action="stop-recording" data-sid="${sessionId}">${icon('stop', 12)} STOP</button>
     </div>
@@ -1163,7 +1163,7 @@ function handleAction(action, el) {
 
     case 'start-recording': {
       const targetFid = el.dataset.fid || null;
-      const num  = parseInt(document.getElementById('setup-num')?.value) || 1;
+      const num  = Math.max(1, parseInt(document.getElementById('setup-num')?.value) || 1);
       const date = document.getElementById('setup-date')?.value || new Date().toISOString().slice(0,10);
 
       const timeBaseActive = document.querySelector('#time-base-seg .segment-btn.active');
@@ -1604,9 +1604,9 @@ function handleAction(action, el) {
           appData.folders  = appData.folders.filter(f => !toDelete.has(f.id));
           appData.sessions = appData.sessions.filter(s => !toDelete.has(s.folderId));
           saveData();
-          // If currently viewing this folder, go back
-          const frame = currentFrame();
-          if (frame.view === 'folder' && frame.folderId === fid) goBack();
+          // 削除されたフォルダ（またはその祖先）を表示中なら navStack をクリアしてホームへ
+          const wasViewing = navStack.some(f => f.view === 'folder' && toDelete.has(f.folderId));
+          if (wasViewing) goHome();
           else render();
           showToast('削除しました');
         }
@@ -1817,10 +1817,16 @@ function handleImport(data) {
   }
   if (!importSession) { showToast('不正なデータ形式です'); return; }
 
+  // 必須フィールドの検証
+  if (typeof importSession.number === 'undefined' ||
+      !Array.isArray(importSession.logs)) {
+    showToast('データが壊れています'); return;
+  }
+
   openSheet(`
     <div class="sheet-title">📥 インポート</div>
     <div style="margin-bottom:16px;color:var(--text2);font-size:14px">
-      第${importSession.number}回収録 (${importSession.date})<br>
+      第${parseInt(importSession.number)||1}回収録 (${esc(String(importSession.date||''))})<br>
       ${importSession.logs.length}件の記録
     </div>
     <div class="form-group">
