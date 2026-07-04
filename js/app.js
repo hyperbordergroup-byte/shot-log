@@ -204,6 +204,15 @@ function sessionSummary(session) {
   return { totalDur, videoDur, videoCount, workDur, workCount, breakDur, breakCount, troubleCount };
 }
 
+// 総収録時間 = REC開始〜終了までの実経過時間（ログの合計ではない）
+function recordingDuration(session) {
+  if (session.startedAt && session.endedAt) {
+    return (session.endedAt - session.startedAt) / 1000;
+  }
+  // まだ収録中、または旧データで記録が無い場合はログ合計にフォールバック
+  return sessionSummary(session).totalDur;
+}
+
 // ============================================================
 // NAVIGATION
 // ============================================================
@@ -649,7 +658,7 @@ function renderSessionReview() {
       <div class="summary-grid">
         <div class="summary-item">
           <div class="summary-item-label">総収録時間</div>
-          <div class="summary-item-value" style="font-size:16px">${formatHMS(sum.totalDur)}</div>
+          <div class="summary-item-value" style="font-size:16px">${formatHMS(recordingDuration(session))}</div>
         </div>
         <div class="summary-item">
           <div class="summary-item-label">動画</div>
@@ -796,7 +805,7 @@ function generateText(session) {
   const lines = [
     `【${folderName} 第${session.number}回収録】 ${session.date}`,
     '',
-    `総収録時間: ${formatHMS(sum.totalDur)}`,
+    `総収録時間: ${formatHMS(recordingDuration(session))}`,
     `動画: ${sum.videoCount}本・計${formatDuration(sum.videoDur)}`,
     `ワーク: ${sum.workCount}回・計${formatDuration(sum.workDur)}`,
     `休憩: ${sum.breakCount}回・計${formatDuration(sum.breakDur)}`,
