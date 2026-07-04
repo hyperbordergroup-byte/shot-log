@@ -10,16 +10,16 @@
 
 :root {
   --bg:        #111111;
-  --surface:   #1e293b;
-  --surface2:  #273449;
-  --surface3:  #334155;
-  --border:    #334155;
-  --border2:   #475569;
+  --surface:   #1a1a1a;
+  --surface2:  #242424;
+  --surface3:  #303030;
+  --border:    #2c2c2c;
+  --border2:   #444444;
   --primary:   #3b82f6;
   --primary-d: #2563eb;
-  --text:      #f1f5f9;
-  --text2:     #cbd5e1;
-  --text3:     #94a3b8;
+  --text:      #f2f2f2;
+  --text2:     #c9c9c9;
+  --text3:     #8f8f8f;
   --danger:    #ef4444;
   --success:   #22c55e;
   --warning:   #f59e0b;
