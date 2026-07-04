@@ -1273,8 +1273,8 @@ function handleAction(action, el) {
       if (!session) break;
       const log = session.logs.find(l => l.id === logId);
       if (!log) break;
-      formState._editContext = { logId, sessionId: sid };
       openLogForm(log.type, session, log);
+      formState._editContext = { logId, sessionId: sid };
       break;
     }
 
