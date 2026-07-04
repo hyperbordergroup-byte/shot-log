@@ -9,7 +9,7 @@
 }
 
 :root {
-  --bg:        #0f172a;
+  --bg:        #111111;
   --surface:   #1e293b;
   --surface2:  #273449;
   --surface3:  #334155;
@@ -18,8 +18,8 @@
   --primary:   #3b82f6;
   --primary-d: #2563eb;
   --text:      #f1f5f9;
-  --text2:     #94a3b8;
-  --text3:     #64748b;
+  --text2:     #cbd5e1;
+  --text3:     #94a3b8;
   --danger:    #ef4444;
   --success:   #22c55e;
   --warning:   #f59e0b;
@@ -32,8 +32,8 @@
   --c-other:   #6b7280;
   --c-missed:  #f97316;
 
-  --r:    12px;
-  --r-sm: 8px;
+  --r:    0px;
+  --r-sm: 0px;
   --hh:   56px;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
@@ -201,7 +201,7 @@ body {
   background: var(--surface3);
   color: var(--text2);
   padding: 2px 8px;
-  border-radius: 20px;
+  border-radius: 0;
   flex-shrink: 0;
 }
 .list-row {
@@ -396,7 +396,7 @@ textarea.form-input {
   padding: 10px 8px;
   background: transparent;
   border: none;
-  border-radius: 6px;
+  border-radius: 0;
   color: var(--text2);
   font-size: 14px;
   font-weight: 500;
@@ -429,7 +429,7 @@ textarea.form-input {
   position: fixed;
   bottom: 0; left: 0; right: 0;
   background: var(--surface);
-  border-radius: 20px 20px 0 0;
+  border-radius: 0;
   z-index: 101;
   transform: translateY(100%);
   transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
@@ -442,7 +442,7 @@ textarea.form-input {
 .sheet-handle {
   width: 36px; height: 4px;
   background: var(--border2);
-  border-radius: 2px;
+  border-radius: 0;
   margin: 10px auto 0;
   flex-shrink: 0;
 }
@@ -474,7 +474,7 @@ textarea.form-input {
   background: var(--surface3);
   color: var(--text);
   padding: 10px 20px;
-  border-radius: 20px;
+  border-radius: 0;
   font-size: 14px;
   font-weight: 500;
   z-index: 200;
@@ -815,7 +815,7 @@ textarea.form-input {
   color: var(--text3);
   background: var(--surface2);
   padding: 2px 6px;
-  border-radius: 10px;
+  border-radius: 0;
 }
 
 .review-log-body { flex: 1; min-width: 0; }
@@ -905,7 +905,7 @@ textarea.form-input {
 .sub-cat-btn {
   background: var(--surface2);
   border: 1px solid var(--border);
-  border-radius: 20px;
+  border-radius: 0;
   color: var(--text2);
   font-size: 13px;
   padding: 6px 12px;
@@ -961,7 +961,7 @@ textarea.form-input {
   display: inline-flex;
   align-items: center;
   padding: 3px 8px;
-  border-radius: 6px;
+  border-radius: 0;
   font-size: 12px;
   font-weight: 600;
 }
@@ -982,7 +982,7 @@ textarea.form-input {
   color: var(--c-missed);
   background: rgba(249,115,22,0.12);
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: 0;
   margin-top: 3px;
   display: inline-block;
 }
@@ -1032,7 +1032,7 @@ textarea.form-input {
 }
 .dialog {
   background: var(--surface);
-  border-radius: 16px;
+  border-radius: 0;
   padding: 24px;
   width: 100%;
   max-width: 340px;
