@@ -869,7 +869,7 @@ function openLogForm(type, session, editLog = null, tapContext = null) {
     type,
     editLog,
     duration:           editLog?.duration          ?? null,
-    durationMode:       editLog?.durationMode       ?? 'auto',
+    durationMode:       editLog?.durationMode       ?? 'unknown',
     memo:               editLog?.memo               ?? '',
     filename:           editLog?.filename           ?? '',
     troubleCategory:    editLog?.troubleCategory    ?? '',
@@ -1741,7 +1741,7 @@ function buildLogFromForm(type, startOffset, isMissed, session) {
   }
 
   if (type === 'talk' || type === 'trouble') {
-    duration = null; durationMode = 'auto';
+    duration = null; durationMode = 'unknown';
   }
 
   const memo     = document.getElementById('f-memo')?.value.trim() || '';
@@ -1794,7 +1794,7 @@ function saveEditedLog() {
       if (d > 0) { duration = d; durationMode = 'custom'; }
     }
   }
-  if (log.type === 'talk' || log.type === 'trouble') { duration = null; durationMode = 'auto'; }
+  if (log.type === 'talk' || log.type === 'trouble') { duration = null; durationMode = 'unknown'; }
 
   log.duration     = duration;
   log.durationMode = durationMode;
