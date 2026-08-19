@@ -397,7 +397,7 @@ function renderFolderRow(folder) {
   const sub = [
     childCount   > 0 ? `フォルダ ${childCount}件`  : '',
     sessionCount > 0 ? `収録 ${sessionCount}回` : '',
-  ].filter(Boolean).join('・') || '空';
+  ].filter(Boolean).join('・') || '0件';
 
   return `<div class="list-row">
     <button class="list-item" data-action="open-folder" data-fid="${folder.id}">
