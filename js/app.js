@@ -36,6 +36,7 @@ function icon(name, size = 24) {
     record:        `<circle cx="12" cy="12" r="10"/>`,
     stop:          `<rect x="3" y="3" width="18" height="18" rx="2"/>`,
     home:          `<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>`,
+    user:          `<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>`,
   };
   const isFilled = ['record','stop'].includes(name);
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="${isFilled ? 'currentColor' : 'none'}" stroke="${isFilled ? 'none' : 'currentColor'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle">${paths[name] || ''}</svg>`;
@@ -329,6 +330,8 @@ function render() {
     case 'recording':      app.innerHTML = renderRecording();               break;
     case 'session-review': app.innerHTML = renderSessionReview();           break;
     case 'export':         app.innerHTML = renderExport();                  break;
+    case 'account':        app.innerHTML = window.ShotLogAuth.renderAccountView(); break;
+    case 'quota-blocked':  app.innerHTML = renderQuotaBlocked();                    break;
     default:               app.innerHTML = renderHome();
   }
 
@@ -404,6 +407,7 @@ function renderHome() {
 
   return `<div class="header">
     <span class="header-title" style="text-align:left;padding-left:8px">Shot Log</span>
+    <button class="header-btn" data-action="open-account">${icon('user', 20)}</button>
   </div>
   <div class="content">
     <div style="padding:16px 16px 8px;display:flex;gap:10px">
@@ -469,6 +473,18 @@ function renderSessionSetup() {
   const today   = new Date().toISOString().slice(0,10);
   const fidAttr = folderId ? `data-fid="${folderId}"` : '';
 
+  const billing = window.ShotLogAuth.getBilling();
+  let quotaHtml = '';
+  if (!billing) {
+    window.ShotLogAuth.ensureBillingLoaded().then(() => {
+      if (currentFrame().view === 'session-setup') render();
+    });
+    quotaHtml = `<div class="quota-badge">残り回数を確認中…</div>`;
+  } else if (billing.plan !== 'pro') {
+    const remaining = Math.max(0, 3 - (billing.free_recordings_used || 0)) + (billing.purchased_recordings_remaining || 0);
+    quotaHtml = `<div class="quota-badge${remaining <= 1 ? ' quota-badge-warn' : ''}">残り${remaining}回</div>`;
+  }
+
   return `<div class="header">
     <button class="header-btn" data-action="back">‹</button>
     <span class="header-title">収録設定</span>
@@ -524,9 +540,32 @@ function renderSessionSetup() {
       </div>
     </div>
 
+    ${quotaHtml}
     <div style="margin:0 16px 32px">
       <button class="btn btn-rec" data-action="start-recording" ${fidAttr}>REC 開始</button>
     </div>
+  </div>`;
+}
+
+// ============================================================
+// VIEW: QUOTA BLOCKED(無料枠を使い切った時のブロック画面)
+// ============================================================
+function renderQuotaBlocked() {
+  return `<div class="header">
+    <button class="header-btn" data-action="back">‹</button>
+    <span class="header-title">無料枠を使い切りました</span>
+    <span style="width:44px"></span>
+  </div>
+  <div class="content content-pad" style="text-align:center;padding-top:40px">
+    <p style="color:var(--text2);line-height:1.8;margin-bottom:28px">
+      都度払いで1回追加できます。フォルダは増やせませんが、<br>
+      今のフォルダのまま収録を続けられます。
+    </p>
+    <button class="btn btn-secondary" style="width:100%" data-action="checkout-one-time">都度払いで1回追加（¥550）</button>
+    <p style="color:var(--text3);font-size:13px;line-height:1.8;margin:24px 0">
+      ここまで良ければPro加入がお得になるタイミングです。
+    </p>
+    <button class="btn btn-primary" style="width:100%" data-action="checkout-subscription">Proに登録して使い放題（¥1,078/月）</button>
   </div>`;
 }
 
@@ -1094,7 +1133,79 @@ function openOffsetEdit(session) {
 // ============================================================
 // ACTION HANDLERS
 // ============================================================
+// ============================================================
+// START RECORDING(サーバー側で回数を確認・消費してから開始)
+// ============================================================
+async function beginRecordingSession(targetFid) {
+  const num  = Math.max(1, parseInt(document.getElementById('setup-num')?.value) || 1);
+  const date = document.getElementById('setup-date')?.value || new Date().toISOString().slice(0,10);
+
+  const timeBaseActive = document.querySelector('#time-base-seg .segment-btn.active');
+  const timeBase = timeBaseActive?.dataset.val || 'zero';
+
+  let timecodeStart = 0;
+  if (timeBase === 'timecode') {
+    timecodeStart = parseTimecode(
+      document.getElementById('tc-h')?.value,
+      document.getElementById('tc-m')?.value,
+      document.getElementById('tc-s')?.value
+    );
+  } else if (timeBase === 'realtime') {
+    const now = new Date();
+    timecodeStart = now.getHours()*3600 + now.getMinutes()*60 + now.getSeconds();
+  }
+
+  const offSign = parseInt(document.getElementById('offset-sign')?.value) || 1;
+  const offSec  = parseTimecode(
+    document.getElementById('off-h')?.value,
+    document.getElementById('off-m')?.value,
+    document.getElementById('off-s')?.value
+  );
+  const offset = offSign * offSec;
+
+  let serverSession;
+  try {
+    serverSession = await window.ShotLogAuth.callStartRecording({
+      p_folder_id: targetFid,
+      p_number: num,
+      p_recorded_on: date,
+      p_time_base: timeBase,
+      p_timecode_start: timecodeStart,
+      p_offset_seconds: offset,
+    });
+  } catch (e) {
+    console.error('[shotlog] start_recording failed', e);
+    if (currentFrame().view === 'session-setup') render();
+    showToast('収録を開始できませんでした。残り回数をご確認ください');
+    return;
+  }
+
+  const session = {
+    id: serverSession.id,
+    folderId: targetFid,
+    number: num,
+    date,
+    name: '',
+    timeBase,
+    timecodeStart,
+    offset,
+    startedAt: null,
+    endedAt: null,
+    status: 'recording',
+    logs: [],
+    createdAt: new Date().toISOString(),
+  };
+
+  appData.sessions.push(session);
+  saveData();
+  navStack.push({ view: 'recording', sessionId: session.id });
+  render();
+  startTimer(session);
+}
+
 function handleAction(action, el) {
+  if (action.indexOf('account-') === 0 || action.indexOf('checkout-') === 0) { window.ShotLogAuth.handleAction(action, el); return; }
+
   const sid = el.dataset.sid;
   const fid = el.dataset.fid;
 
@@ -1102,6 +1213,10 @@ function handleAction(action, el) {
 
     // ── Navigation ──────────────────────────────────────────
     case 'back': goBack(); break;
+
+    case 'open-account':
+      navigate({ view: 'account' });
+      break;
 
     case 'open-folder':
       navigate({ view: 'folder', folderId: fid });
@@ -1163,62 +1278,36 @@ function handleAction(action, el) {
 
     // ── Start session ────────────────────────────────────────
     case 'new-quick-session':
-      navigate({ view: 'session-setup', folderId: null });
+      window.ShotLogAuth.requireLogin(() => navigate({ view: 'session-setup', folderId: null }));
       break;
 
     case 'new-session-in-folder':
-      navigate({ view: 'session-setup', folderId: fid });
+      window.ShotLogAuth.requireLogin(() => navigate({ view: 'session-setup', folderId: fid }));
       break;
 
     case 'start-recording': {
       const targetFid = el.dataset.fid || null;
-      const num  = Math.max(1, parseInt(document.getElementById('setup-num')?.value) || 1);
-      const date = document.getElementById('setup-date')?.value || new Date().toISOString().slice(0,10);
+      const billing = window.ShotLogAuth.getBilling();
 
-      const timeBaseActive = document.querySelector('#time-base-seg .segment-btn.active');
-      const timeBase = timeBaseActive?.dataset.val || 'zero';
-
-      let timecodeStart = 0;
-      if (timeBase === 'timecode') {
-        timecodeStart = parseTimecode(
-          document.getElementById('tc-h')?.value,
-          document.getElementById('tc-m')?.value,
-          document.getElementById('tc-s')?.value
-        );
-      } else if (timeBase === 'realtime') {
-        const now = new Date();
-        timecodeStart = now.getHours()*3600 + now.getMinutes()*60 + now.getSeconds();
+      if (!billing) {
+        showToast('プラン情報を確認中です。少し待ってから再度お試しください');
+        break;
       }
 
-      const offSign = parseInt(document.getElementById('offset-sign')?.value) || 1;
-      const offSec  = parseTimecode(
-        document.getElementById('off-h')?.value,
-        document.getElementById('off-m')?.value,
-        document.getElementById('off-s')?.value
-      );
-      const offset = offSign * offSec;
+      if (billing.plan === 'pro') {
+        beginRecordingSession(targetFid);
+        break;
+      }
 
-      const session = {
-        id: uid(),
-        folderId: targetFid,
-        number: num,
-        date,
-        name: '',
-        timeBase,
-        timecodeStart,
-        offset,
-        startedAt: null,
-        endedAt: null,
-        status: 'recording',
-        logs: [],
-        createdAt: new Date().toISOString(),
-      };
+      const remaining = Math.max(0, 3 - (billing.free_recordings_used || 0)) + (billing.purchased_recordings_remaining || 0);
 
-      appData.sessions.push(session);
-      saveData();
-      navStack.push({ view: 'recording', sessionId: session.id });
-      render();
-      startTimer(session);
+      if (remaining <= 0) {
+        navigate({ view: 'quota-blocked' });
+        break;
+      }
+
+      const title = remaining === 1 ? 'これが最後の無料枠です' : `残り${remaining}回です`;
+      showConfirm(title, '開始しますか？', () => beginRecordingSession(targetFid), '開始する', 'btn-primary');
       break;
     }
 

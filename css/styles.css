@@ -126,6 +126,20 @@ body {
 .content-pad { padding: 16px; }
 
 /* ============================================================
+   QUOTA BADGE(残り回数表示・4章)
+   ============================================================ */
+.quota-badge {
+  margin: 0 16px 20px;
+  padding: 10px 14px;
+  background: var(--surface);
+  border-radius: var(--r);
+  color: var(--text2);
+  font-size: 13px;
+  text-align: center;
+}
+.quota-badge-warn { color: var(--warning); }
+
+/* ============================================================
    SECTION HEADER
    ============================================================ */
 .section-label {
@@ -174,6 +188,7 @@ body {
 .list-item-body { flex: 1; min-width: 0; }
 
 .list-item-title {
+  display: block;
   font-size: 16px;
   font-weight: 500;
   white-space: nowrap;
@@ -182,6 +197,7 @@ body {
 }
 
 .list-item-sub {
+  display: block;
   font-size: 13px;
   color: var(--text2);
   margin-top: 2px;
