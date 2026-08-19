@@ -322,7 +322,7 @@ function resumeTimerIfNeeded() {
 // GLOBAL TOP BAR(常時表示・SHOT LOGブランド + アカウント)
 // ============================================================
 function renderGlobalTopBar() {
-  return `<div class="header">
+  return `<div class="header app-topbar">
     <span class="header-title" style="text-align:left;padding-left:8px;display:flex;align-items:center;gap:8px">
       <img src="icons/favicon-32.png?v=2" alt="" width="24" height="24">SHOT LOG
     </span>
@@ -352,6 +352,7 @@ function render() {
   }
 
   const activeFolderId = frame.view === 'folder' ? frame.folderId : null;
+  app.dataset.view = frame.view;
   app.innerHTML = `${renderGlobalTopBar()}
   <div class="app-shell" style="--sidebar-width:${sidebarWidth}px">
     <aside class="app-sidebar">

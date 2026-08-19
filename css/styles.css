@@ -557,7 +557,13 @@ textarea.form-input {
 .app-sidebar { display: none; }
 .app-main { display: contents; }
 
+/* モバイル幅では、ホーム以外の画面は各画面固有のヘッダー(戻る+タイトル)だけを
+   表示し、常時表示用のSHOT LOGバーは重複するため隠す */
+#app:not([data-view="home"]) .app-topbar { display: none; }
+
 @media (min-width: 769px) {
+  .app-topbar { display: flex !important; }
+
   .app-shell {
     display: flex;
     flex: 1;
