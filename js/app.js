@@ -76,6 +76,8 @@ let appData = loadData();
 
 let navStack = [{ view: 'home' }];
 let expandedSidebarFolders = new Set();
+let sidebarWidth = parseInt(localStorage.getItem('shotlog_sidebar_width')) || 280;
+let draggedItem = null; // { type: 'folder'|'session', id } — ドラッグ中のアイテム
 
 let timerInterval  = null;
 let timerStartedAt = null;
@@ -324,22 +326,65 @@ function render() {
   const app   = document.getElementById('app');
   closeSheet();
 
+  let viewHtml;
   switch (frame.view) {
-    case 'home':           app.innerHTML = renderHome();                    break;
-    case 'folder':         app.innerHTML = renderFolder(frame.folderId);   break;
-    case 'session-setup':  app.innerHTML = renderSessionSetup();            break;
-    case 'recording':      app.innerHTML = renderRecording();               break;
-    case 'session-review': app.innerHTML = renderSessionReview();           break;
-    case 'export':         app.innerHTML = renderExport();                  break;
-    case 'account':        app.innerHTML = window.ShotLogAuth.renderAccountView(); break;
-    case 'quota-blocked':  app.innerHTML = renderQuotaBlocked();                    break;
-    default:               app.innerHTML = renderHome();
+    case 'home':           viewHtml = renderHome();                    break;
+    case 'folder':         viewHtml = renderFolder(frame.folderId);   break;
+    case 'session-setup':  viewHtml = renderSessionSetup();            break;
+    case 'recording':      viewHtml = renderRecording();               break;
+    case 'session-review': viewHtml = renderSessionReview();           break;
+    case 'export':         viewHtml = renderExport();                  break;
+    case 'account':        viewHtml = window.ShotLogAuth.renderAccountView(); break;
+    case 'quota-blocked':  viewHtml = renderQuotaBlocked();                    break;
+    default:               viewHtml = renderHome();
   }
+
+  const activeFolderId = frame.view === 'folder' ? frame.folderId : null;
+  app.innerHTML = `<div class="app-shell" style="--sidebar-width:${sidebarWidth}px">
+    <aside class="app-sidebar">
+      <div class="app-sidebar-scroll">${renderAppSidebar(activeFolderId)}</div>
+      <div class="app-sidebar-resize" id="sidebar-resize-handle"></div>
+    </aside>
+    <div class="app-main">${viewHtml}</div>
+  </div>`;
 
   if (frame.view === 'recording' && timerInterval) {
     const el = document.getElementById('timer-display');
     if (el) el.textContent = formatHMS(getElapsedSeconds());
   }
+}
+
+// ============================================================
+// DESKTOP SIDEBAR(フォルダツリー・未分類ファイル)
+// ============================================================
+function renderAppSidebar(activeFolderId) {
+  const folders = getTopLevelFolders();
+  const unfiled = getUnfiledSessions();
+
+  const foldersHtml = folders.length > 0
+    ? folders.map(f => renderSidebarFolder(f, 0, activeFolderId)).join('')
+    : `<div class="app-sidebar-empty">フォルダはありません</div>`;
+
+  const unfiledHtml = unfiled.length > 0
+    ? `<div class="app-sidebar-heading">未分類</div>
+       <div class="app-sidebar-list">${[...unfiled].reverse().map(s => renderSidebarSession(s)).join('')}</div>`
+    : '';
+
+  return `
+    <div class="app-sidebar-heading">フォルダ</div>
+    <button class="app-sidebar-add" data-action="add-folder">＋ フォルダを追加</button>
+    <div class="app-sidebar-list app-sidebar-drop-root" data-action="drop-to-root">${foldersHtml}</div>
+    ${unfiledHtml}
+  `;
+}
+
+function renderSidebarSession(session) {
+  const isRec = session.status === 'recording';
+  return `<button class="sidebar-session-row" data-action="open-session" data-sid="${session.id}"
+      draggable="true" data-drag-type="session" data-drag-id="${session.id}">
+    <span class="sidebar-session-icon" style="color:${isRec ? 'var(--danger)' : 'var(--text3)'}">${icon(isRec ? 'record' : 'file', 16)}</span>
+    <span class="sidebar-session-name">${esc(session.name || `第${session.number}回収録`)}</span>
+  </button>`;
 }
 
 // ============================================================
@@ -366,26 +411,30 @@ function renderFolderRow(folder) {
   </div>`;
 }
 
-function renderSidebarFolder(folder, depth = 0) {
+function renderSidebarFolder(folder, depth = 0, activeFolderId = null) {
   const children = getChildFolders(folder.id);
   const hasChildren = children.length > 0;
   const isExpanded = expandedSidebarFolders.has(folder.id);
   const sessionCount = getSessionsInFolder(folder.id).length;
+  const isActive = folder.id === activeFolderId;
 
   return `<div class="sidebar-folder-group">
-    <div class="sidebar-folder-row" style="--folder-depth:${depth}">
+    <div class="sidebar-folder-row${isActive ? ' is-active' : ''}" style="--folder-depth:${depth}"
+      data-action="drop-target" data-drop-fid="${folder.id}">
       <button class="sidebar-folder-toggle${hasChildren ? '' : ' is-empty'}"
         data-action="toggle-sidebar-folder" data-fid="${folder.id}"
         aria-label="${hasChildren ? (isExpanded ? 'フォルダを閉じる' : 'フォルダを展開') : '子フォルダなし'}">
         ${hasChildren ? '<span class="sidebar-folder-chevron">›</span>' : ''}
       </button>
-      <button class="sidebar-folder-open" data-action="open-folder" data-fid="${folder.id}">
+      <button class="sidebar-folder-open" data-action="open-folder" data-fid="${folder.id}"
+        draggable="true" data-drag-type="folder" data-drag-id="${folder.id}">
+        <span class="sidebar-folder-icon">${icon('folder', 16)}</span>
         <span class="sidebar-folder-name">${esc(folder.name)}</span>
         ${sessionCount > 0 ? `<span class="sidebar-folder-count">${sessionCount}</span>` : ''}
       </button>
       <button class="sidebar-folder-opts" data-action="folder-opts" data-fid="${folder.id}" aria-label="フォルダの操作">···</button>
     </div>
-    ${isExpanded ? `<div class="sidebar-folder-children">${children.map(child => renderSidebarFolder(child, depth + 1)).join('')}</div>` : ''}
+    ${isExpanded ? `<div class="sidebar-folder-children">${children.map(child => renderSidebarFolder(child, depth + 1, activeFolderId)).join('')}</div>` : ''}
   </div>`;
 }
 
@@ -429,40 +478,17 @@ function renderHome() {
       <div class="list-group">${folders.map(f => renderFolderRow(f)).join('')}</div>`;
   }
 
-  const desktopFolders = folders.length > 0
-    ? folders.map(f => renderSidebarFolder(f)).join('')
-    : `<div class="home-sidebar-empty">案件フォルダはありません</div>`;
-
   return `<div class="header">
-    <span class="header-title" style="text-align:left;padding-left:8px">Shot Log</span>
+    <span class="header-title" style="text-align:left;padding-left:8px">SHOT LOG</span>
     <button class="header-btn" data-action="open-account">${icon('user', 20)}</button>
   </div>
   <div class="content home-content">
-    <div class="home-desktop-layout">
-      <aside class="home-sidebar">
-        <div class="home-sidebar-heading">案件フォルダ</div>
-        <button class="home-sidebar-add" data-action="add-folder">＋ フォルダを追加</button>
-        <div class="home-sidebar-list">${desktopFolders}</div>
-      </aside>
-      <main class="home-main">
-        <div class="home-main-heading">
-          <div>
-            <div class="home-main-title">収録履歴</div>
-            <div class="home-main-subtitle">最近の収録を管理</div>
-          </div>
-          <button class="btn btn-primary home-main-record" data-action="new-quick-session">新規収録</button>
-        </div>
-        ${unfiledHtml || `<div class="home-main-empty">収録履歴はありません</div>`}
-      </main>
+    <div style="padding:16px 16px 8px;display:flex;gap:10px">
+      <button class="btn btn-primary" style="flex:1;width:auto" data-action="new-quick-session">新規収録</button>
+      <button class="btn btn-secondary" style="flex:1;width:auto" data-action="add-folder">＋ フォルダ</button>
     </div>
-    <div class="home-mobile-layout">
-      <div style="padding:16px 16px 8px;display:flex;gap:10px">
-        <button class="btn btn-primary" style="flex:1;width:auto" data-action="new-quick-session">新規収録</button>
-        <button class="btn btn-secondary" style="flex:1;width:auto" data-action="add-folder">＋ フォルダ</button>
-      </div>
-      ${unfiledHtml}
-      ${foldersHtml}
-    </div>
+    ${unfiledHtml}
+    ${foldersHtml}
   </div>`;
 }
 
@@ -2096,6 +2122,93 @@ document.addEventListener('change', e => {
 // Close sheet on overlay tap
 document.getElementById('overlay').addEventListener('click', () => {
   closeSheet();
+});
+
+// ============================================================
+// SIDEBAR: フォルダ/ファイルのドラッグ&ドロップ移動
+// ============================================================
+let dropTargetEl = null;
+
+function clearDropTarget() {
+  if (dropTargetEl) { dropTargetEl.classList.remove('is-drop-over'); dropTargetEl = null; }
+}
+
+document.addEventListener('dragstart', e => {
+  const el = e.target.closest('[draggable="true"]');
+  if (!el) return;
+  draggedItem = { type: el.dataset.dragType, id: el.dataset.dragId };
+  el.classList.add('is-dragging');
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', el.dataset.dragId);
+});
+
+document.addEventListener('dragend', e => {
+  const el = e.target.closest('[draggable="true"]');
+  if (el) el.classList.remove('is-dragging');
+  clearDropTarget();
+  draggedItem = null;
+});
+
+document.addEventListener('dragover', e => {
+  if (!draggedItem) return;
+  const folderRow = e.target.closest('.sidebar-folder-row');
+  const rootZone  = e.target.closest('.app-sidebar-drop-root');
+  if (!folderRow && !rootZone) return;
+
+  e.preventDefault();
+  const target = folderRow || rootZone;
+  if (dropTargetEl !== target) {
+    clearDropTarget();
+    if (folderRow) { dropTargetEl = target; dropTargetEl.classList.add('is-drop-over'); }
+  }
+});
+
+document.addEventListener('dragleave', e => {
+  const folderRow = e.target.closest('.sidebar-folder-row');
+  if (folderRow && folderRow === dropTargetEl && !folderRow.contains(e.relatedTarget)) {
+    clearDropTarget();
+  }
+});
+
+document.addEventListener('drop', e => {
+  if (!draggedItem) return;
+  const folderRow = e.target.closest('.sidebar-folder-row');
+  const rootZone  = e.target.closest('.app-sidebar-drop-root');
+  if (!folderRow && !rootZone) return;
+  e.preventDefault();
+
+  const targetFolderId = folderRow ? folderRow.dataset.dropFid : null;
+
+  if (draggedItem.type === 'folder') {
+    if (targetFolderId === draggedItem.id) { clearDropTarget(); return; }
+    if (targetFolderId && isFolderDescendantOf(targetFolderId, draggedItem.id)) { clearDropTarget(); return; }
+    const folder = getFolder(draggedItem.id);
+    if (folder) { folder.parentId = targetFolderId || null; saveData(); render(); }
+  } else if (draggedItem.type === 'session') {
+    const session = getSessionById(draggedItem.id);
+    if (session) { session.folderId = targetFolderId || null; saveData(); render(); }
+  }
+  clearDropTarget();
+});
+
+// ============================================================
+// SIDEBAR: 幅のドラッグリサイズ
+// ============================================================
+document.addEventListener('mousedown', e => {
+  if (!e.target.closest('#sidebar-resize-handle')) return;
+  e.preventDefault();
+  const onMove = me => {
+    sidebarWidth = Math.min(480, Math.max(200, me.clientX));
+    const sidebar = document.querySelector('.app-sidebar');
+    if (sidebar) sidebar.style.setProperty('--sidebar-width', `${sidebarWidth}px`);
+  };
+  const onUp = () => {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    localStorage.setItem('shotlog_sidebar_width', String(sidebarWidth));
+  };
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
 });
 
 // ============================================================
