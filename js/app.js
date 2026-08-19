@@ -319,6 +319,18 @@ function resumeTimerIfNeeded() {
 }
 
 // ============================================================
+// GLOBAL TOP BAR(常時表示・SHOT LOGブランド + アカウント)
+// ============================================================
+function renderGlobalTopBar() {
+  return `<div class="header">
+    <span class="header-title" style="text-align:left;padding-left:8px;display:flex;align-items:center;gap:8px">
+      <img src="icons/favicon-32.png?v=2" alt="" width="24" height="24">SHOT LOG
+    </span>
+    <button class="header-btn" data-action="open-account">${icon('user', 20)}</button>
+  </div>`;
+}
+
+// ============================================================
 // RENDER DISPATCHER
 // ============================================================
 function render() {
@@ -340,13 +352,13 @@ function render() {
   }
 
   const activeFolderId = frame.view === 'folder' ? frame.folderId : null;
-  app.innerHTML = `${view.header}
+  app.innerHTML = `${renderGlobalTopBar()}
   <div class="app-shell" style="--sidebar-width:${sidebarWidth}px">
     <aside class="app-sidebar">
       <div class="app-sidebar-scroll">${renderAppSidebar(activeFolderId)}</div>
       <div class="app-sidebar-resize" id="sidebar-resize-handle"></div>
     </aside>
-    <div class="app-main">${view.content}</div>
+    <div class="app-main">${view.header}${view.content}</div>
   </div>`;
 
   if (frame.view === 'recording' && timerInterval) {
@@ -480,12 +492,7 @@ function renderHome() {
   }
 
   return {
-    header: `<div class="header">
-      <span class="header-title" style="text-align:left;padding-left:8px;display:flex;align-items:center;gap:8px">
-        <img src="icons/favicon-32.png" alt="" width="24" height="24">SHOT LOG
-      </span>
-      <button class="header-btn" data-action="open-account">${icon('user', 20)}</button>
-    </div>`,
+    header: '',
     content: `<div class="content home-content">
       <div class="home-main-actions">
         <button class="btn btn-primary" data-action="new-quick-session">新規収録</button>
