@@ -75,6 +75,7 @@ function saveData() {
 let appData = loadData();
 
 let navStack = [{ view: 'home' }];
+let expandedSidebarFolders = new Set();
 
 let timerInterval  = null;
 let timerStartedAt = null;
@@ -365,6 +366,29 @@ function renderFolderRow(folder) {
   </div>`;
 }
 
+function renderSidebarFolder(folder, depth = 0) {
+  const children = getChildFolders(folder.id);
+  const hasChildren = children.length > 0;
+  const isExpanded = expandedSidebarFolders.has(folder.id);
+  const sessionCount = getSessionsInFolder(folder.id).length;
+
+  return `<div class="sidebar-folder-group">
+    <div class="sidebar-folder-row" style="--folder-depth:${depth}">
+      <button class="sidebar-folder-toggle${hasChildren ? '' : ' is-empty'}"
+        data-action="toggle-sidebar-folder" data-fid="${folder.id}"
+        aria-label="${hasChildren ? (isExpanded ? 'フォルダを閉じる' : 'フォルダを展開') : '子フォルダなし'}">
+        ${hasChildren ? '<span class="sidebar-folder-chevron">›</span>' : ''}
+      </button>
+      <button class="sidebar-folder-open" data-action="open-folder" data-fid="${folder.id}">
+        <span class="sidebar-folder-name">${esc(folder.name)}</span>
+        ${sessionCount > 0 ? `<span class="sidebar-folder-count">${sessionCount}</span>` : ''}
+      </button>
+      <button class="sidebar-folder-opts" data-action="folder-opts" data-fid="${folder.id}" aria-label="フォルダの操作">···</button>
+    </div>
+    ${isExpanded ? `<div class="sidebar-folder-children">${children.map(child => renderSidebarFolder(child, depth + 1)).join('')}</div>` : ''}
+  </div>`;
+}
+
 function renderSessionRow(session) {
   const isRec = session.status === 'recording';
   const sum   = sessionSummary(session);
@@ -405,17 +429,40 @@ function renderHome() {
       <div class="list-group">${folders.map(f => renderFolderRow(f)).join('')}</div>`;
   }
 
+  const desktopFolders = folders.length > 0
+    ? folders.map(f => renderSidebarFolder(f)).join('')
+    : `<div class="home-sidebar-empty">案件フォルダはありません</div>`;
+
   return `<div class="header">
     <span class="header-title" style="text-align:left;padding-left:8px">Shot Log</span>
     <button class="header-btn" data-action="open-account">${icon('user', 20)}</button>
   </div>
-  <div class="content">
-    <div style="padding:16px 16px 8px;display:flex;gap:10px">
-      <button class="btn btn-primary" style="flex:1;width:auto" data-action="new-quick-session">新規収録</button>
-      <button class="btn btn-secondary" style="flex:1;width:auto" data-action="add-folder">＋ フォルダ</button>
+  <div class="content home-content">
+    <div class="home-desktop-layout">
+      <aside class="home-sidebar">
+        <div class="home-sidebar-heading">案件フォルダ</div>
+        <button class="home-sidebar-add" data-action="add-folder">＋ フォルダを追加</button>
+        <div class="home-sidebar-list">${desktopFolders}</div>
+      </aside>
+      <main class="home-main">
+        <div class="home-main-heading">
+          <div>
+            <div class="home-main-title">収録履歴</div>
+            <div class="home-main-subtitle">最近の収録を管理</div>
+          </div>
+          <button class="btn btn-primary home-main-record" data-action="new-quick-session">新規収録</button>
+        </div>
+        ${unfiledHtml || `<div class="home-main-empty">収録履歴はありません</div>`}
+      </main>
     </div>
-    ${unfiledHtml}
-    ${foldersHtml}
+    <div class="home-mobile-layout">
+      <div style="padding:16px 16px 8px;display:flex;gap:10px">
+        <button class="btn btn-primary" style="flex:1;width:auto" data-action="new-quick-session">新規収録</button>
+        <button class="btn btn-secondary" style="flex:1;width:auto" data-action="add-folder">＋ フォルダ</button>
+      </div>
+      ${unfiledHtml}
+      ${foldersHtml}
+    </div>
   </div>`;
 }
 
@@ -816,7 +863,7 @@ function sessionFolderName(session) {
 }
 
 function generateCSV(session) {
-  const header = ['✔','開始','終了','所要時間','項目','メモ','備考'].join(',');
+  const header = ['確認','開始','終了','所要時間','項目','メモ','備考'].join(',');
   const rows = session.logs.map(l => {
     const t = LOG_TYPES[l.type] || LOG_TYPES.other;
     const startSec = logDisplayTime(l, session);
@@ -1028,7 +1075,7 @@ function renderPhotoField(photos) {
     `<div style="position:relative">
       <img class="photo-thumb" src="${p}" alt="photo">
       <button data-action="remove-photo" data-index="${i}"
-        style="position:absolute;top:-6px;right:-6px;background:var(--danger);color:#fff;border:none;border-radius:50%;width:22px;height:22px;font-size:12px;cursor:pointer">✕</button>
+        style="position:absolute;top:-6px;right:-6px;background:var(--danger);color:#fff;border:none;border-radius:50%;width:22px;height:22px;font-size:12px;cursor:pointer">×</button>
     </div>`
   ).join('');
   return `<div class="form-group">
@@ -1036,7 +1083,7 @@ function renderPhotoField(photos) {
     <div class="photo-row" id="photo-row">
       ${thumbs}
       <label class="photo-add-btn">
-        📷<span style="font-size:11px">追加</span>
+        ＋<span style="font-size:11px">追加</span>
         <input type="file" accept="image/*" id="photo-input" style="display:none" multiple>
       </label>
     </div>
@@ -1222,6 +1269,15 @@ function handleAction(action, el) {
       navigate({ view: 'folder', folderId: fid });
       break;
 
+    case 'toggle-sidebar-folder':
+      if (expandedSidebarFolders.has(fid)) {
+        expandedSidebarFolders.delete(fid);
+      } else {
+        expandedSidebarFolders.add(fid);
+      }
+      render();
+      break;
+
     case 'open-session': {
       const s = getSessionById(sid);
       if (!s) return;
@@ -1240,7 +1296,7 @@ function handleAction(action, el) {
     // ── Create folders ───────────────────────────────────────
     case 'add-folder': {
       openSheet(`
-        <div class="sheet-title">📁 フォルダを追加</div>
+        <div class="sheet-title">フォルダを追加</div>
         <div class="form-group">
           <label class="form-label">フォルダ名</label>
           <input class="form-input" type="text" id="new-folder-name" placeholder="例：企業名など">
@@ -1254,7 +1310,7 @@ function handleAction(action, el) {
     case 'add-subfolder': {
       const pFid = el.dataset.parentFid;
       openSheet(`
-        <div class="sheet-title">📁 フォルダを追加</div>
+        <div class="sheet-title">フォルダを追加</div>
         <div class="form-group">
           <label class="form-label">フォルダ名</label>
           <input class="form-input" type="text" id="new-folder-name" placeholder="例：フォルダ名など">
@@ -1524,7 +1580,7 @@ function handleAction(action, el) {
           `<div style="position:relative">
             <img class="photo-thumb" src="${p}" alt="photo">
             <button data-action="remove-photo" data-index="${i}"
-              style="position:absolute;top:-6px;right:-6px;background:var(--danger);color:#fff;border:none;border-radius:50%;width:22px;height:22px;font-size:12px;cursor:pointer">✕</button>
+              style="position:absolute;top:-6px;right:-6px;background:var(--danger);color:#fff;border:none;border-radius:50%;width:22px;height:22px;font-size:12px;cursor:pointer">×</button>
           </div>`
         ).join('');
         const addBtn = row.querySelector('label');
@@ -1609,7 +1665,7 @@ function handleAction(action, el) {
       openSheet(`
         <div class="sheet-title">${esc(folder.name)}</div>
         <div style="display:flex;flex-direction:column;gap:10px">
-          <button class="btn btn-secondary" data-action="move-folder" data-fid="${fid}">📁 移動</button>
+          <button class="btn btn-secondary" data-action="move-folder" data-fid="${fid}">移動</button>
           <button class="btn btn-secondary" data-action="rename-folder" data-fid="${fid}">名前を変更</button>
           <button class="btn btn-secondary" style="color:var(--danger)" data-action="delete-folder" data-fid="${fid}">削除する</button>
         </div>
@@ -1634,7 +1690,7 @@ function handleAction(action, el) {
       pickerHtml += buildFolderPickerHtml('confirm-move-folder', `data-fid="${moveFid}"`, moveFid, curParent);
 
       openSheet(`
-        <div class="sheet-title">📁 移動先を選択</div>
+        <div class="sheet-title">移動先を選択</div>
         <div class="list-group" style="margin:0">${pickerHtml}</div>
       `);
       break;
@@ -1720,7 +1776,7 @@ function handleAction(action, el) {
       openSheet(`
         <div class="sheet-title">${esc(title)}</div>
         <div style="display:flex;flex-direction:column;gap:10px">
-          <button class="btn btn-secondary" data-action="move-session" data-sid="${sid}">📁 移動</button>
+          <button class="btn btn-secondary" data-action="move-session" data-sid="${sid}">移動</button>
           <button class="btn btn-secondary" data-action="rename-session" data-sid="${sid}">名前を変更</button>
           <button class="btn btn-secondary" style="color:var(--danger)" data-action="delete-session" data-sid="${sid}">削除する</button>
         </div>
@@ -1744,7 +1800,7 @@ function handleAction(action, el) {
       pickerHtml += buildFolderPickerHtml('confirm-move-session', `data-sid="${sid}"`, null, curFid);
 
       openSheet(`
-        <div class="sheet-title">📁 移動先を選択</div>
+        <div class="sheet-title">移動先を選択</div>
         <div class="list-group" style="margin:0">${pickerHtml}</div>
       `);
       break;
@@ -1922,7 +1978,7 @@ function handleImport(data) {
   }
 
   openSheet(`
-    <div class="sheet-title">📥 インポート</div>
+    <div class="sheet-title">インポート</div>
     <div style="margin-bottom:16px;color:var(--text2);font-size:14px">
       第${parseInt(importSession.number)||1}回収録 (${esc(String(importSession.date||''))})<br>
       ${importSession.logs.length}件の記録
@@ -2027,7 +2083,7 @@ document.addEventListener('change', e => {
           const idx = formState.photos.length - 1;
           div.innerHTML = `<img class="photo-thumb" src="${ev.target.result}" alt="photo">
             <button data-action="remove-photo" data-index="${idx}"
-              style="position:absolute;top:-6px;right:-6px;background:var(--danger);color:#fff;border:none;border-radius:50%;width:22px;height:22px;font-size:12px;cursor:pointer">✕</button>`;
+              style="position:absolute;top:-6px;right:-6px;background:var(--danger);color:#fff;border:none;border-radius:50%;width:22px;height:22px;font-size:12px;cursor:pointer">×</button>`;
           const addBtn = row.querySelector('label');
           row.insertBefore(div, addBtn);
         }
