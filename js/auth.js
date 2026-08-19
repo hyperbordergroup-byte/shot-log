@@ -214,9 +214,8 @@
   }
 
   function rerender() {
-    if (typeof currentFrame === 'function' && currentFrame().view === 'account') {
-      const app = document.getElementById('app');
-      if (app) app.innerHTML = renderAccountView();
+    if (typeof currentFrame === 'function' && currentFrame().view === 'account' && typeof render === 'function') {
+      render();
     }
   }
 
@@ -239,14 +238,15 @@
   }
 
   function accountShell(inner) {
-    return (
-      '<div class="header">' +
-      '<button class="header-btn" data-action="back">‹</button>' +
-      '<span class="header-title">アカウント</span>' +
-      '<span style="width:44px"></span>' +
-      '</div>' +
-      '<div class="content" style="padding:20px 16px">' + inner + '</div>'
-    );
+    return {
+      header:
+        '<div class="header">' +
+        '<button class="header-btn" data-action="back">‹</button>' +
+        '<span class="header-title">アカウント</span>' +
+        '<span style="width:44px"></span>' +
+        '</div>',
+      content: '<div class="content" style="padding:20px 16px">' + inner + '</div>',
+    };
   }
 
   function renderEmailForm() {

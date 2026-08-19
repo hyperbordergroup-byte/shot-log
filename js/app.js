@@ -326,26 +326,27 @@ function render() {
   const app   = document.getElementById('app');
   closeSheet();
 
-  let viewHtml;
+  let view;
   switch (frame.view) {
-    case 'home':           viewHtml = renderHome();                    break;
-    case 'folder':         viewHtml = renderFolder(frame.folderId);   break;
-    case 'session-setup':  viewHtml = renderSessionSetup();            break;
-    case 'recording':      viewHtml = renderRecording();               break;
-    case 'session-review': viewHtml = renderSessionReview();           break;
-    case 'export':         viewHtml = renderExport();                  break;
-    case 'account':        viewHtml = window.ShotLogAuth.renderAccountView(); break;
-    case 'quota-blocked':  viewHtml = renderQuotaBlocked();                    break;
-    default:               viewHtml = renderHome();
+    case 'home':           view = renderHome();                    break;
+    case 'folder':         view = renderFolder(frame.folderId);   break;
+    case 'session-setup':  view = renderSessionSetup();            break;
+    case 'recording':      view = renderRecording();               break;
+    case 'session-review': view = renderSessionReview();           break;
+    case 'export':         view = renderExport();                  break;
+    case 'account':        view = window.ShotLogAuth.renderAccountView(); break;
+    case 'quota-blocked':  view = renderQuotaBlocked();                    break;
+    default:               view = renderHome();
   }
 
   const activeFolderId = frame.view === 'folder' ? frame.folderId : null;
-  app.innerHTML = `<div class="app-shell" style="--sidebar-width:${sidebarWidth}px">
+  app.innerHTML = `${view.header}
+  <div class="app-shell" style="--sidebar-width:${sidebarWidth}px">
     <aside class="app-sidebar">
       <div class="app-sidebar-scroll">${renderAppSidebar(activeFolderId)}</div>
       <div class="app-sidebar-resize" id="sidebar-resize-handle"></div>
     </aside>
-    <div class="app-main">${viewHtml}</div>
+    <div class="app-main">${view.content}</div>
   </div>`;
 
   if (frame.view === 'recording' && timerInterval) {
@@ -478,18 +479,22 @@ function renderHome() {
       <div class="list-group">${folders.map(f => renderFolderRow(f)).join('')}</div>`;
   }
 
-  return `<div class="header">
-    <span class="header-title" style="text-align:left;padding-left:8px">SHOT LOG</span>
-    <button class="header-btn" data-action="open-account">${icon('user', 20)}</button>
-  </div>
-  <div class="content home-content">
-    <div class="home-main-actions">
-      <button class="btn btn-primary" data-action="new-quick-session">新規収録</button>
-      <button class="btn btn-secondary" data-action="add-folder">＋ フォルダ</button>
-    </div>
-    ${unfiledHtml}
-    ${foldersHtml}
-  </div>`;
+  return {
+    header: `<div class="header">
+      <span class="header-title" style="text-align:left;padding-left:8px;display:flex;align-items:center;gap:8px">
+        <img src="icons/favicon-32.png" alt="" width="24" height="24">SHOT LOG
+      </span>
+      <button class="header-btn" data-action="open-account">${icon('user', 20)}</button>
+    </div>`,
+    content: `<div class="content home-content">
+      <div class="home-main-actions">
+        <button class="btn btn-primary" data-action="new-quick-session">新規収録</button>
+        <button class="btn btn-secondary" data-action="add-folder">＋ フォルダ</button>
+      </div>
+      ${unfiledHtml}
+      ${foldersHtml}
+    </div>`,
+  };
 }
 
 // ============================================================
@@ -497,7 +502,7 @@ function renderHome() {
 // ============================================================
 function renderFolder(folderId) {
   const folder = getFolder(folderId);
-  if (!folder) { goHome(); return ''; }
+  if (!folder) { goHome(); return { header: '', content: '' }; }
 
   const childFolders = getChildFolders(folderId);
   const sessions     = getSessionsInFolder(folderId);
@@ -520,20 +525,22 @@ function renderFolder(folderId) {
     }
   }
 
-  return `<div class="header">
-    <button class="header-btn" data-action="back">‹</button>
-    <span class="header-title">${esc(folder.name)}</span>
-    <span style="width:44px"></span>
-  </div>
-  <div class="content">
-    <div style="padding:16px 16px 8px;display:flex;gap:10px">
-      <button class="btn btn-primary" style="flex:1;width:auto"
-        data-action="new-session-in-folder" data-fid="${folderId}">新規収録</button>
-      <button class="btn btn-secondary" style="flex:1;width:auto"
-        data-action="add-subfolder" data-parent-fid="${folderId}">＋ フォルダ</button>
-    </div>
-    ${content}
-  </div>`;
+  return {
+    header: `<div class="header">
+      <button class="header-btn" data-action="back">‹</button>
+      <span class="header-title">${esc(folder.name)}</span>
+      <span style="width:44px"></span>
+    </div>`,
+    content: `<div class="content">
+      <div style="padding:16px 16px 8px;display:flex;gap:10px">
+        <button class="btn btn-primary" style="flex:1;width:auto"
+          data-action="new-session-in-folder" data-fid="${folderId}">新規収録</button>
+        <button class="btn btn-secondary" style="flex:1;width:auto"
+          data-action="add-subfolder" data-parent-fid="${folderId}">＋ フォルダ</button>
+      </div>
+      ${content}
+    </div>`,
+  };
 }
 
 // ============================================================
@@ -558,11 +565,11 @@ function renderSessionSetup() {
     quotaHtml = `<div class="quota-badge${remaining <= 1 ? ' quota-badge-warn' : ''}">残り${remaining}回</div>`;
   }
 
-  return `<div class="header">
+  return { header: `<div class="header">
     <button class="header-btn" data-action="back">‹</button>
     <span class="header-title">収録設定</span>
     <span style="width:44px"></span>
-  </div>
+  </div>`, content: `
   <div class="content content-pad">
 
     <div class="setup-section">
@@ -617,18 +624,18 @@ function renderSessionSetup() {
     <div style="margin:0 16px 32px">
       <button class="btn btn-rec" data-action="start-recording" ${fidAttr}>REC 開始</button>
     </div>
-  </div>`;
+  </div>` };
 }
 
 // ============================================================
 // VIEW: QUOTA BLOCKED(無料枠を使い切った時のブロック画面)
 // ============================================================
 function renderQuotaBlocked() {
-  return `<div class="header">
+  return { header: `<div class="header">
     <button class="header-btn" data-action="back">‹</button>
     <span class="header-title">無料枠を使い切りました</span>
     <span style="width:44px"></span>
-  </div>
+  </div>`, content: `
   <div class="content content-pad" style="text-align:center;padding-top:40px">
     <p style="color:var(--text2);line-height:1.8;margin-bottom:28px">
       都度払いで1回追加できます。フォルダは増やせませんが、<br>
@@ -639,7 +646,7 @@ function renderQuotaBlocked() {
       ここまで良ければPro加入がお得になるタイミングです。
     </p>
     <button class="btn btn-primary" style="width:100%" data-action="checkout-subscription">Proに登録して使い放題（¥1,078/月）</button>
-  </div>`;
+  </div>` };
 }
 
 // ============================================================
@@ -648,7 +655,7 @@ function renderQuotaBlocked() {
 function renderRecording() {
   const { sessionId } = currentFrame();
   const session = getSessionById(sessionId);
-  if (!session) { goBack(); return ''; }
+  if (!session) { goBack(); return { header: '', content: '' }; }
 
   const folderName = session.folderId
     ? (getFolder(session.folderId)?.name || '未分類')
@@ -664,15 +671,14 @@ function renderRecording() {
     ? (Date.now() - session.startedAt) / 1000 + (session.timecodeStart||0)
     : (session.timecodeStart||0);
 
-  return `<div class="recording-screen">
-    <div class="header">
+  return { header: `<div class="header">
       <div class="rec-header-info">
         <div class="rec-header-name">${esc(folderName)} 第${session.number}回</div>
         <div class="rec-header-sub">${esc(session.date)}</div>
       </div>
       <button class="stop-btn" data-action="stop-recording" data-sid="${sessionId}">${icon('stop', 12)} STOP</button>
-    </div>
-
+    </div>`, content: `
+  <div class="recording-screen">
     <div class="timer-area">
       <div class="timer-clock" id="timer-clock"></div>
       <div class="timer-display recording" id="timer-display">${formatHMS(elapsed)}</div>
@@ -713,7 +719,7 @@ function renderRecording() {
         <span class="rec-btn-label">入力忘れ</span>
       </button>
     </div>
-  </div>`;
+  </div>` };
 }
 
 function renderLogRow(log, session) {
@@ -748,7 +754,7 @@ function renderLogRow(log, session) {
 function renderSessionReview() {
   const { sessionId } = currentFrame();
   const session = getSessionById(sessionId);
-  if (!session) { goBack(); return ''; }
+  if (!session) { goBack(); return { header: '', content: '' }; }
 
   const sum = sessionSummary(session);
 
@@ -758,11 +764,11 @@ function renderSessionReview() {
         session.logs.map(l => renderReviewEntry(l, session)).join('') +
       `</div>`;
 
-  return `<div class="header">
+  return { header: `<div class="header">
     <button class="header-btn" data-action="back">‹</button>
     <span class="header-title">${esc(session.name || `第${session.number}回収録`)}</span>
     <button class="header-action" data-action="go-export" data-sid="${sessionId}">出力</button>
-  </div>
+  </div>`, content: `
   <div class="content">
 
     <div class="summary-card">
@@ -806,7 +812,7 @@ function renderSessionReview() {
         オフセット補正 ${session.offset ? (session.offset>0?'+':'')+formatHMS(Math.abs(session.offset)) : '0:00:00'}
       </button>
     </div>
-  </div>`;
+  </div>` };
 }
 
 function renderReviewEntry(log, session) {
@@ -843,13 +849,13 @@ function renderReviewEntry(log, session) {
 function renderExport() {
   const { sessionId } = currentFrame();
   const session = getSessionById(sessionId);
-  if (!session) { goBack(); return ''; }
+  if (!session) { goBack(); return { header: '', content: '' }; }
 
-  return `<div class="header">
+  return { header: `<div class="header">
     <button class="header-btn" data-action="back">‹</button>
     <span class="header-title">出力</span>
     <span style="width:44px"></span>
-  </div>
+  </div>`, content: `
   <div class="content content-pad">
 
     <div class="form-group">
@@ -878,7 +884,7 @@ function renderExport() {
       </div>
     </div>
 
-  </div>`;
+  </div>` };
 }
 
 // ============================================================
