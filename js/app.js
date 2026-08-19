@@ -539,10 +539,10 @@ function renderFolder(folderId) {
       <span style="width:44px"></span>
     </div>`,
     content: `<div class="content">
-      <div style="padding:16px 16px 8px;display:flex;gap:10px">
-        <button class="btn btn-primary" style="flex:1;width:auto"
+      <div class="home-main-actions">
+        <button class="btn btn-primary"
           data-action="new-session-in-folder" data-fid="${folderId}">新規収録</button>
-        <button class="btn btn-secondary" style="flex:1;width:auto"
+        <button class="btn btn-secondary"
           data-action="add-subfolder" data-parent-fid="${folderId}">＋ フォルダ</button>
       </div>
       ${content}
