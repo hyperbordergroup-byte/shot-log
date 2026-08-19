@@ -350,6 +350,7 @@ function render() {
     case 'export':         view = renderExport();                  break;
     case 'account':        view = window.ShotLogAuth.renderAccountView(); break;
     case 'quota-blocked':  view = renderQuotaBlocked();                    break;
+    case 'folder-quota-blocked': view = renderFolderQuotaBlocked();        break;
     default:               view = renderHome();
   }
 
@@ -654,6 +655,24 @@ function renderQuotaBlocked() {
     <button class="btn btn-secondary" style="width:100%" data-action="checkout-one-time">都度払いで1回追加（¥550）</button>
     <p style="color:var(--text3);font-size:13px;line-height:1.8;margin:24px 0">
       ここまで良ければPro加入がお得になるタイミングです。
+    </p>
+    <button class="btn btn-primary" style="width:100%" data-action="checkout-subscription">Proに登録して使い放題（¥1,078/月）</button>
+  </div>` };
+}
+
+// ============================================================
+// VIEW: FOLDER QUOTA BLOCKED(無料プランのフォルダ上限に達した時)
+// ============================================================
+function renderFolderQuotaBlocked() {
+  return { header: `<div class="header">
+    <button class="header-btn" data-action="back">‹</button>
+    <span class="header-title">フォルダ数の上限です</span>
+    <span style="width:44px"></span>
+  </div>`, content: `
+  <div class="content content-pad" style="text-align:center;padding-top:40px">
+    <p style="color:var(--text2);line-height:1.8;margin-bottom:28px">
+      無料プランはフォルダを1件までしか作成できません。<br>
+      複数の案件フォルダを管理するには、Proへの登録が必要です。
     </p>
     <button class="btn btn-primary" style="width:100%" data-action="checkout-subscription">Proに登録して使い放題（¥1,078/月）</button>
   </div>` };
@@ -1299,7 +1318,12 @@ async function saveNewFolder(name, parentFid) {
   if (window.ShotLogAuth.isLoggedIn()) {
     const { data, error } = await window.ShotLogAuth.sync.createFolder(name, parentFid);
     if (error) {
-      showToast(error === 'Folder limit reached' ? 'フォルダ数の上限に達しています(Proで無制限)' : 'フォルダを作成できませんでした');
+      closeSheet();
+      if (error === 'Folder limit reached') {
+        navigate({ view: 'folder-quota-blocked' });
+      } else {
+        showToast('フォルダを作成できませんでした');
+      }
       return;
     }
     appData.folders.push({ id: data.id, name: data.name, parentId: data.parentId, createdAt: new Date().toISOString() });
