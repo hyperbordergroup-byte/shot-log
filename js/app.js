@@ -89,7 +89,8 @@ let formState = {};
 // UUID
 // ============================================================
 function uid() {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  // Supabase側にそのまま同期できるよう、正式なUUID形式で発行する
+  return crypto.randomUUID();
 }
 
 // ============================================================
@@ -190,6 +191,7 @@ function resolveAutoDurations(session) {
   for (let i = 0; i < logs.length - 1; i++) {
     if (logs[i].durationMode === 'auto' && logs[i].duration == null) {
       logs[i].duration = logs[i+1].startOffset - logs[i].startOffset;
+      window.ShotLogAuth.sync.updateLog(logs[i].id, { duration_seconds: logs[i].duration });
     }
   }
 }
@@ -1290,6 +1292,25 @@ async function beginRecordingSession(targetFid) {
   startTimer(session);
 }
 
+// ============================================================
+// CREATE FOLDER(ログイン中はサーバー側で作成・件数上限を判定)
+// ============================================================
+async function saveNewFolder(name, parentFid) {
+  if (window.ShotLogAuth.isLoggedIn()) {
+    const { data, error } = await window.ShotLogAuth.sync.createFolder(name, parentFid);
+    if (error) {
+      showToast(error === 'Folder limit reached' ? 'フォルダ数の上限に達しています(Proで無制限)' : 'フォルダを作成できませんでした');
+      return;
+    }
+    appData.folders.push({ id: data.id, name: data.name, parentId: data.parentId, createdAt: new Date().toISOString() });
+  } else {
+    appData.folders.push({ id: uid(), name, parentId: parentFid, createdAt: new Date().toISOString() });
+  }
+  saveData();
+  closeSheet();
+  render();
+}
+
 function handleAction(action, el) {
   if (action.indexOf('account-') === 0 || action.indexOf('checkout-') === 0) { window.ShotLogAuth.handleAction(action, el); return; }
 
@@ -1365,10 +1386,7 @@ function handleAction(action, el) {
       const name = document.getElementById('new-folder-name')?.value.trim();
       if (!name) { showToast('名前を入力してください'); return; }
       const parentFid = el.dataset.parentFid || null;
-      appData.folders.push({ id: uid(), name, parentId: parentFid, createdAt: new Date().toISOString() });
-      saveData();
-      closeSheet();
-      render();
+      saveNewFolder(name, parentFid);
       break;
     }
 
@@ -1418,6 +1436,10 @@ function handleAction(action, el) {
           session.endedAt = Date.now();
           resolveAutoDurations(session);
           saveData();
+          window.ShotLogAuth.sync.updateSession(sid, {
+            status: 'completed',
+            ended_at: new Date(session.endedAt).toISOString(),
+          });
           navStack[navStack.length-1] = { view: 'session-review', sessionId: sid };
           render();
         }, '終了する', 'btn-danger'
@@ -1450,6 +1472,7 @@ function handleAction(action, el) {
       session.logs.push(log);
       resolveAutoDurations(session);
       saveData();
+      window.ShotLogAuth.sync.insertLog(log, session.id);
 
       closeSheet();
       const ll = document.getElementById('log-list');
@@ -1481,6 +1504,7 @@ function handleAction(action, el) {
           session.logs = session.logs.filter(l => l.id !== logId);
           resolveAutoDurations(session);
           saveData();
+          window.ShotLogAuth.sync.deleteLog(logId);
           closeSheet();
           render();
         }
@@ -1536,6 +1560,13 @@ function handleAction(action, el) {
       let vn = 1;
       session.logs.forEach(l => { if (l.type==='video') l.videoNumber = vn++; });
       saveData();
+      window.ShotLogAuth.sync.insertLog(log, session.id);
+      // 挿入位置によって既存の動画番号が振り直された分も同期する
+      session.logs.forEach(l => {
+        if (l.type === 'video' && l.id !== log.id) {
+          window.ShotLogAuth.sync.updateLog(l.id, { video_number: l.videoNumber });
+        }
+      });
       closeSheet();
       render();
       showToast('入力し忘れを追加しました');
@@ -1649,6 +1680,7 @@ function handleAction(action, el) {
       );
       session.offset = sign * sec;
       saveData();
+      window.ShotLogAuth.sync.updateSession(sid, { offset_seconds: session.offset });
       closeSheet();
       render();
       showToast('オフセットを更新しました');
@@ -1751,6 +1783,7 @@ function handleAction(action, el) {
 
       folder.parentId = targetFid || null;
       saveData();
+      window.ShotLogAuth.sync.updateFolder(moveFid, { parent_id: targetFid || null });
       closeSheet();
       render();
       showToast('移動しました');
@@ -1782,6 +1815,7 @@ function handleAction(action, el) {
       if (!name) { showToast('名前を入力してください'); return; }
       folder.name = name;
       saveData();
+      window.ShotLogAuth.sync.updateFolder(fid, { name });
       closeSheet();
       render();
       showToast('名前を変更しました');
@@ -1796,9 +1830,13 @@ function handleAction(action, el) {
         '中のフォルダ・収録データもすべて削除されます。',
         () => {
           const toDelete = new Set([fid, ...getFolderDescendants(fid)]);
+          const sessionsToDelete = appData.sessions.filter(s => toDelete.has(s.folderId));
           appData.folders  = appData.folders.filter(f => !toDelete.has(f.id));
           appData.sessions = appData.sessions.filter(s => !toDelete.has(s.folderId));
           saveData();
+          // サーバー側:セッション(→配下のログはcascadeで自動削除)を先に、次にフォルダを削除
+          sessionsToDelete.forEach(s => window.ShotLogAuth.sync.deleteSession(s.id));
+          toDelete.forEach(id => window.ShotLogAuth.sync.deleteFolder(id));
           // 削除されたフォルダ（またはその祖先）を表示中なら navStack をクリアしてホームへ
           const wasViewing = navStack.some(f => f.view === 'folder' && toDelete.has(f.folderId));
           if (wasViewing) goHome();
@@ -1853,6 +1891,7 @@ function handleAction(action, el) {
       const targetFid = el.dataset.targetFid || null;
       session.folderId = targetFid || null;
       saveData();
+      window.ShotLogAuth.sync.updateSession(sid, { folder_id: targetFid || null });
       closeSheet();
       render();
       showToast('移動しました');
@@ -1884,6 +1923,7 @@ function handleAction(action, el) {
       const name = document.getElementById('rename-session-input')?.value.trim();
       session.name = name || '';
       saveData();
+      window.ShotLogAuth.sync.updateSession(sid, { name: session.name });
       closeSheet();
       render();
       showToast('名前を変更しました');
@@ -1899,6 +1939,7 @@ function handleAction(action, el) {
         () => {
           appData.sessions = appData.sessions.filter(s => s.id !== sid);
           saveData();
+          window.ShotLogAuth.sync.deleteSession(sid);
           goBack();
           showToast('削除しました');
         }
@@ -1994,6 +2035,14 @@ function saveEditedLog() {
   log.photos = [...(formState.photos || [])];
 
   saveData();
+  window.ShotLogAuth.sync.updateLog(log.id, {
+    duration_seconds: log.duration,
+    duration_mode: log.durationMode,
+    memo: log.memo,
+    filename: log.filename,
+    trouble_category: log.troubleCategory,
+    trouble_subcategory: log.troubleSubcategory,
+  });
   closeSheet();
   render();
   showToast('変更を保存しました');

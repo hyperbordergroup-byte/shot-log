@@ -61,7 +61,185 @@
     state.step = 'account';
     await migrateIfNeeded();
     await loadBillingStatus();
+    await pullRemoteIntoLocal();
     handleCheckoutReturn();
+  }
+
+  // app.jsの読み込み完了をポーリングで待つ。ページ読み込み直後の
+  // refreshSession()は、auth.jsがapp.jsより先に評価されるため、
+  // ネットワークが速いと appData 等がまだ未定義な状態で呼ばれうる。
+  function waitForAppReady(timeoutMs) {
+    return new Promise((resolve) => {
+      const start = Date.now();
+      (function check() {
+        if (typeof appData !== 'undefined' && typeof saveData === 'function' && typeof render === 'function') {
+          resolve(true);
+        } else if (Date.now() - start > timeoutMs) {
+          resolve(false);
+        } else {
+          setTimeout(check, 50);
+        }
+      })();
+    });
+  }
+
+  // ── ログイン中は、サーバー側のフォルダ・収録・ログを正として
+  //    ローカルデータを置き換える(複数端末で同じ内容を見られるように) ──
+  async function pullRemoteIntoLocal() {
+    const remote = await pullAll();
+    if (!remote) return;
+    const ready = await waitForAppReady(5000);
+    if (!ready) {
+      console.error('[shotlog] pullRemoteIntoLocal: app.js not ready in time');
+      return;
+    }
+    try {
+      appData.folders = remote.folders;
+      appData.sessions = remote.sessions;
+      saveData();
+      render();
+    } catch (e) {
+      console.error('[shotlog] pullRemoteIntoLocal failed', e);
+    }
+  }
+
+  async function pullAll() {
+    if (!client || !state.session) return null;
+    const userId = state.session.user.id;
+    const [foldersRes, sessionsRes, logsRes] = await Promise.all([
+      client.from('folders').select('id, parent_id, name').eq('user_id', userId),
+      client.from('sessions')
+        .select('id, folder_id, number, recorded_on, name, time_base, timecode_start, offset_seconds, started_at, ended_at, status')
+        .eq('user_id', userId),
+      client.from('shot_logs')
+        .select('id, session_id, type, start_offset_seconds, duration_seconds, duration_mode, video_number, filename, memo, trouble_category, trouble_subcategory, photos, is_missed, created_at')
+        .eq('user_id', userId),
+    ]);
+    if (foldersRes.error || sessionsRes.error || logsRes.error) {
+      console.error('[shotlog] pullAll failed', foldersRes.error || sessionsRes.error || logsRes.error);
+      return null;
+    }
+
+    const logsBySession = {};
+    (logsRes.data || []).forEach((l) => {
+      if (!logsBySession[l.session_id]) logsBySession[l.session_id] = [];
+      logsBySession[l.session_id].push({
+        id: l.id,
+        type: l.type,
+        startOffset: Number(l.start_offset_seconds) || 0,
+        duration: l.duration_seconds == null ? null : Number(l.duration_seconds),
+        durationMode: l.duration_mode,
+        videoNumber: l.video_number,
+        filename: l.filename || '',
+        memo: l.memo || '',
+        troubleCategory: l.trouble_category || '',
+        troubleSubcategory: l.trouble_subcategory || '',
+        photos: l.photos || [],
+        isMissed: !!l.is_missed,
+        createdAt: l.created_at ? new Date(l.created_at).getTime() : Date.now(),
+      });
+    });
+
+    const folders = (foldersRes.data || []).map((f) => ({
+      id: f.id,
+      parentId: f.parent_id || null,
+      name: f.name,
+      createdAt: new Date().toISOString(),
+    }));
+
+    const sessions = (sessionsRes.data || []).map((s) => ({
+      id: s.id,
+      folderId: s.folder_id || null,
+      number: s.number,
+      date: s.recorded_on,
+      name: s.name || '',
+      timeBase: s.time_base,
+      timecodeStart: Number(s.timecode_start) || 0,
+      offset: Number(s.offset_seconds) || 0,
+      startedAt: s.started_at ? new Date(s.started_at).getTime() : null,
+      endedAt: s.ended_at ? new Date(s.ended_at).getTime() : null,
+      status: s.status,
+      logs: (logsBySession[s.id] || []).sort((a, b) => a.startOffset - b.startOffset),
+      createdAt: new Date().toISOString(),
+    }));
+
+    return { folders, sessions };
+  }
+
+  // ── フォルダ・収録・ログの同期API(app.jsの各操作から呼ばれる) ──────
+  // 未ログイン時は何もしない(ローカルのみで動作する)。
+  async function createFolder(name, parentId) {
+    if (!client || !state.session) return { data: null, error: 'not_logged_in' };
+    const { data, error } = await client.rpc('create_folder', { p_name: name, p_parent_id: parentId || null });
+    if (error) {
+      console.error('[shotlog] createFolder failed', error);
+      return { data: null, error: error.message || 'error' };
+    }
+    return { data: { id: data.id, name: data.name, parentId: data.parent_id || null }, error: null };
+  }
+
+  function updateFolder(id, fields) {
+    if (!client || !state.session) return;
+    client.from('folders').update(fields).eq('id', id).then(({ error }) => {
+      if (error) console.error('[shotlog] updateFolder failed', error);
+    });
+  }
+
+  function deleteFolder(id) {
+    if (!client || !state.session) return;
+    client.from('folders').delete().eq('id', id).then(({ error }) => {
+      if (error) console.error('[shotlog] deleteFolder failed', error);
+    });
+  }
+
+  function updateSession(id, fields) {
+    if (!client || !state.session) return;
+    client.from('sessions').update(fields).eq('id', id).then(({ error }) => {
+      if (error) console.error('[shotlog] updateSession failed', error);
+    });
+  }
+
+  function deleteSession(id) {
+    if (!client || !state.session) return;
+    client.from('sessions').delete().eq('id', id).then(({ error }) => {
+      if (error) console.error('[shotlog] deleteSession failed', error);
+    });
+  }
+
+  function insertLog(log, sessionId) {
+    if (!client || !state.session) return;
+    client.from('shot_logs').insert({
+      id: log.id,
+      user_id: state.session.user.id,
+      session_id: sessionId,
+      type: log.type,
+      start_offset_seconds: log.startOffset,
+      duration_seconds: log.duration,
+      duration_mode: log.durationMode,
+      video_number: log.videoNumber,
+      filename: log.filename || '',
+      memo: log.memo || '',
+      trouble_category: log.troubleCategory || '',
+      trouble_subcategory: log.troubleSubcategory || '',
+      photos: [],
+      is_missed: !!log.isMissed,
+    }).then(({ error }) => {
+      if (error) console.error('[shotlog] insertLog failed', error);
+    });
+  }
+
+  function updateLog(id, fields) {
+    if (!client || !state.session) return;
+    client.from('shot_logs').update(fields).eq('id', id).then(({ error }) => {
+      if (error) console.error('[shotlog] updateLog failed', error);
+    });
+  }
+
+  function deleteLog(id) {
+    if (!client || !state.session) return;
+    client.from('shot_logs').delete().eq('id', id).then(({ error }) => {
+      if (error) console.error('[shotlog] deleteLog failed', error);
+    });
   }
 
   // ── Stripe Checkoutから戻ってきた直後の後処理 ─────────────────
@@ -78,6 +256,7 @@
   // ── ログイン前ローカルデータの初回移行(1回限り・無言) ─────────
   async function migrateIfNeeded() {
     if (localStorage.getItem(MIGRATION_DONE_KEY) === '1') return;
+    await waitForAppReady(5000);
     if (!localDataHasContent()) {
       localStorage.setItem(MIGRATION_DONE_KEY, '1');
       return;
@@ -400,6 +579,16 @@
     ensureBillingLoaded: ensureBillingLoaded,
     callStartRecording: callStartRecording,
     isLoggedIn: function () { return !!state.session; },
+    sync: {
+      createFolder: createFolder,
+      updateFolder: updateFolder,
+      deleteFolder: deleteFolder,
+      updateSession: updateSession,
+      deleteSession: deleteSession,
+      insertLog: insertLog,
+      updateLog: updateLog,
+      deleteLog: deleteLog,
+    },
   };
 
   // ページ読み込み直後からセッション確認を始めておく
