@@ -1704,6 +1704,7 @@ function handleAction(action, el) {
       openSheet(`
         <div class="sheet-title">${esc(folder.name)}</div>
         <div style="display:flex;flex-direction:column;gap:10px">
+          <button class="btn btn-secondary" data-action="add-subfolder" data-parent-fid="${fid}">フォルダ追加</button>
           <button class="btn btn-secondary" data-action="move-folder" data-fid="${fid}">移動</button>
           <button class="btn btn-secondary" data-action="rename-folder" data-fid="${fid}">名前を変更</button>
           <button class="btn btn-secondary" style="color:var(--danger)" data-action="delete-folder" data-fid="${fid}">削除する</button>
