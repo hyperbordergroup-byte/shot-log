@@ -483,9 +483,9 @@ function renderHome() {
     <button class="header-btn" data-action="open-account">${icon('user', 20)}</button>
   </div>
   <div class="content home-content">
-    <div style="padding:16px 16px 8px;display:flex;gap:10px">
-      <button class="btn btn-primary" style="flex:1;width:auto" data-action="new-quick-session">新規収録</button>
-      <button class="btn btn-secondary" style="flex:1;width:auto" data-action="add-folder">＋ フォルダ</button>
+    <div class="home-main-actions">
+      <button class="btn btn-primary" data-action="new-quick-session">新規収録</button>
+      <button class="btn btn-secondary" data-action="add-folder">＋ フォルダ</button>
     </div>
     ${unfiledHtml}
     ${foldersHtml}
