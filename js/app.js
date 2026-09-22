@@ -1964,7 +1964,9 @@ function handleAction(action, el) {
           appData.sessions = appData.sessions.filter(s => s.id !== sid);
           saveData();
           window.ShotLogAuth.sync.deleteSession(sid);
-          goBack();
+          // goBack()はnavStackが1件(トップ階層)のときは何もしないため、
+          // その場合は明示的にrender()して一覧から即座に消す
+          if (navStack.length > 1) goBack(); else render();
           showToast('削除しました');
         }
       );
