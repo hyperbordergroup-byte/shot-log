@@ -221,7 +221,7 @@
       memo: log.memo || '',
       trouble_category: log.troubleCategory || '',
       trouble_subcategory: log.troubleSubcategory || '',
-      photos: [],
+      photos: log.photos || [],
       is_missed: !!log.isMissed,
     }).then(({ error }) => {
       if (error) console.error('[shotlog] insertLog failed', error);

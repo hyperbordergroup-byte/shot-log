@@ -2066,6 +2066,7 @@ function saveEditedLog() {
     filename: log.filename,
     trouble_category: log.troubleCategory,
     trouble_subcategory: log.troubleSubcategory,
+    photos: log.photos,
   });
   closeSheet();
   render();
