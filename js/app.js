@@ -545,9 +545,11 @@ function renderAppSidebar(activeFolderId) {
   `;
 }
 
-function renderSidebarSession(session) {
+// depth：フォルダの中に並べるときの階層（未分類なら null）
+function renderSidebarSession(session, depth = null) {
   const isRec = session.status === 'recording';
-  return `<button class="sidebar-session-row" data-action="open-session" data-sid="${session.id}"
+  const inFolder = depth === null ? '' : ` is-in-folder" style="--folder-depth:${depth}`;
+  return `<button class="sidebar-session-row${inFolder}" data-action="open-session" data-sid="${session.id}"
       draggable="true" data-drag-type="session" data-drag-id="${session.id}">
     <span class="sidebar-session-icon" style="color:${isRec ? 'var(--danger)' : 'var(--text3)'}">${icon(isRec ? 'record' : 'file', 16)}</span>
     <span class="sidebar-session-name">${esc(sessionTitle(session))}</span>
@@ -583,9 +585,10 @@ function renderFolderRow(folder) {
 
 function renderSidebarFolder(folder, depth = 0, activeFolderId = null) {
   const children = getChildFolders(folder.id);
-  const hasChildren = children.length > 0;
+  const sessions = getSessionsInFolder(folder.id);
+  const hasChildren = children.length > 0 || sessions.length > 0;
   const isExpanded = expandedSidebarFolders.has(folder.id);
-  const sessionCount = getSessionsInFolder(folder.id).length;
+  const sessionCount = sessions.length;
   const isActive = folder.id === activeFolderId;
 
   return `<div class="sidebar-folder-group">
@@ -593,7 +596,7 @@ function renderSidebarFolder(folder, depth = 0, activeFolderId = null) {
       data-action="drop-target" data-drop-fid="${folder.id}">
       <button class="sidebar-folder-toggle${hasChildren ? '' : ' is-empty'}"
         data-action="toggle-sidebar-folder" data-fid="${folder.id}"
-        aria-label="${hasChildren ? (isExpanded ? 'フォルダを閉じる' : 'フォルダを展開') : '子フォルダなし'}">
+        aria-label="${hasChildren ? (isExpanded ? 'フォルダを閉じる' : 'フォルダを展開') : '中身なし'}">
         ${hasChildren ? '<span class="sidebar-folder-chevron">›</span>' : ''}
       </button>
       <button class="sidebar-folder-open" data-action="open-folder" data-fid="${folder.id}"
@@ -604,7 +607,10 @@ function renderSidebarFolder(folder, depth = 0, activeFolderId = null) {
       </button>
       <button class="sidebar-folder-opts" data-action="folder-opts" data-fid="${folder.id}" aria-label="フォルダの操作">···</button>
     </div>
-    ${isExpanded ? `<div class="sidebar-folder-children">${children.map(child => renderSidebarFolder(child, depth + 1, activeFolderId)).join('')}</div>` : ''}
+    ${isExpanded && hasChildren ? `<div class="sidebar-folder-children">
+      ${children.map(child => renderSidebarFolder(child, depth + 1, activeFolderId)).join('')}
+      ${[...sessions].reverse().map(s => renderSidebarSession(s, depth)).join('')}
+    </div>` : ''}
   </div>`;
 }
 

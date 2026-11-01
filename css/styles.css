@@ -773,6 +773,8 @@ textarea.form-input {
     cursor: grab;
   }
   .sidebar-session-row:hover { background: var(--surface2); color: var(--text); }
+  /* フォルダの中の収録：フォルダ名の位置に揃える */
+  .sidebar-session-row.is-in-folder { padding-left: calc(46px + var(--folder-depth) * 16px); }
   .sidebar-session-icon { display: flex; flex-shrink: 0; }
   .sidebar-session-name {
     min-width: 0;
