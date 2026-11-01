@@ -140,8 +140,34 @@ function formatDuration(seconds) {
   return `${m}分${rem}秒`;
 }
 
-function parseTimecode(h, m, s) {
-  return (parseInt(h)||0)*3600 + (parseInt(m)||0)*60 + (parseInt(s)||0);
+// ━━ 時間の入力欄：数字を続けて打つと右から埋まる（5 3 0 → 5:30、1 0 5 3 0 → 1:05:30） ━━
+// 欄は1つだけなので、分から秒へタップで移る必要がない。hours：時:分:秒の欄か（なければ分:秒）
+function timeEntryText(digits, hours) {
+  if (!digits) return '';
+  const sec = digits.slice(-2).padStart(2, '0');
+  if (hours) return `${digits.slice(0, -4) || '0'}:${digits.slice(-4, -2).padStart(2, '0')}:${sec}`;
+  return `${digits.slice(0, -2) || '0'}:${sec}`;
+}
+
+function timeEntryHtml(id, seconds, hours) {
+  const value = seconds == null ? '' : secondsToEntry(seconds, hours);
+  return `<input class="time-entry" type="text" inputmode="numeric" autocomplete="off" id="${id}"
+    data-hours="${hours ? 1 : 0}" placeholder="${hours ? '0:00:00' : '0:00'}" value="${value}">`;
+}
+
+function secondsToEntry(seconds, hours) {
+  const s = Math.floor(seconds);
+  const pad = n => String(n).padStart(2, '0');
+  return hours
+    ? `${Math.floor(s / 3600)}:${pad(Math.floor(s % 3600 / 60))}:${pad(s % 60)}`
+    : `${Math.floor(s / 60)}:${pad(s % 60)}`;
+}
+
+// 欄の内容 → 秒。空なら null
+function timeEntrySeconds(id) {
+  const value = document.getElementById(id)?.value.trim();
+  if (!value) return null;
+  return value.split(':').reduce((sum, part) => sum * 60 + (parseInt(part) || 0), 0);
 }
 
 // 端末の時刻での今日(toISOString はUTCなので、朝9時前だと前日になる)
@@ -712,13 +738,7 @@ function renderSessionSetup() {
       </div>
       <div id="timecode-row" style="display:none;margin-top:12px">
         <label class="form-label">開始タイムコード</label>
-        <div class="timecode-input">
-          <input type="number" id="tc-h" placeholder="00" min="0" max="99">
-          <span class="sep">:</span>
-          <input type="number" id="tc-m" placeholder="00" min="0" max="59">
-          <span class="sep">:</span>
-          <input type="number" id="tc-s" placeholder="00" min="0" max="59">
-        </div>
+        ${timeEntryHtml('tc-time', null, true)}
       </div>
     </div>
 
@@ -729,13 +749,7 @@ function renderSessionSetup() {
           <option value="1">＋</option>
           <option value="-1">－</option>
         </select>
-        <div class="timecode-input timecode-sm" style="flex:1">
-          <input type="number" id="off-h" placeholder="00" min="0" max="99">
-          <span class="sep">:</span>
-          <input type="number" id="off-m" placeholder="00" min="0" max="59">
-          <span class="sep">:</span>
-          <input type="number" id="off-s" placeholder="00" min="0" max="59">
-        </div>
+        ${timeEntryHtml('off-time', null, true)}
       </div>
     </div>
 
@@ -1157,7 +1171,7 @@ function openLogForm(type, session, editLog = null, tapContext = null) {
 
 function renderDurationPicker(presets, currentMode, currentDuration) {
   const isUnknown = currentMode === 'unknown';
-  const isCustom  = currentMode === 'custom';
+  const isCustom  = currentMode === 'custom' && currentDuration != null;
 
   const presetBtns = presets.map(sec => {
     const selected = currentMode === 'preset' && currentDuration === sec ? 'selected' : '';
@@ -1173,9 +1187,6 @@ function renderDurationPicker(presets, currentMode, currentDuration) {
     不明
   </button>`;
 
-  const customMin = isCustom ? Math.floor(currentDuration/60) : '';
-  const customSec = isCustom ? currentDuration%60 : '';
-
   return `<div class="form-group">
     <label class="form-label">所要時間（自動＝次の記録まで）</label>
     <div class="preset-grid" id="preset-grid">
@@ -1183,13 +1194,9 @@ function renderDurationPicker(presets, currentMode, currentDuration) {
       ${unknownBtn}
       ${presetBtns}
     </div>
-    <div class="custom-duration" style="margin-top:10px">
-      <input type="number" id="custom-min" placeholder="0" min="0" max="999"
-        value="${customMin}" class="${isCustom?'active':''}">
-      <span>分</span>
-      <input type="number" id="custom-sec" placeholder="00" min="0" max="59"
-        value="${customSec}" class="${isCustom?'active':''}">
-      <span>秒</span>
+    <div class="custom-duration">
+      <span>自由入力（分:秒）</span>
+      ${timeEntryHtml('custom-time', isCustom ? currentDuration : null, false)}
     </div>
   </div>`;
 }
@@ -1258,24 +1265,12 @@ function openMissedForm(session) {
 
     <div class="form-group">
       <label class="form-label">タイム（発生した時間）</label>
-      <div class="timecode-input">
-        <input type="number" id="missed-h" placeholder="0" min="0">
-        <span class="sep">:</span>
-        <input type="number" id="missed-m" placeholder="00" min="0" max="59">
-        <span class="sep">:</span>
-        <input type="number" id="missed-s" placeholder="00" min="0" max="59">
-      </div>
+      ${timeEntryHtml('missed-time', null, true)}
     </div>
 
     <div class="form-group">
       <label class="form-label">所要時間（任意）</label>
-      <div class="timecode-input">
-        <input type="number" id="missed-dur-h" placeholder="0" min="0">
-        <span class="sep">:</span>
-        <input type="number" id="missed-dur-m" placeholder="00" min="0" max="59">
-        <span class="sep">:</span>
-        <input type="number" id="missed-dur-s" placeholder="00" min="0" max="59">
-      </div>
+      ${timeEntryHtml('missed-dur', null, true)}
     </div>
 
     <div class="form-group">
@@ -1296,9 +1291,6 @@ function openMissedForm(session) {
 function openOffsetEdit(session) {
   const abs  = Math.abs(session.offset || 0);
   const sign = (session.offset || 0) < 0 ? -1 : 1;
-  const h = Math.floor(abs/3600);
-  const m = Math.floor((abs%3600)/60);
-  const s = abs%60;
 
   openSheet(`
     <div class="sheet-title">オフセット補正</div>
@@ -1309,13 +1301,7 @@ function openOffsetEdit(session) {
           <option value="1" ${sign===1?'selected':''}>＋</option>
           <option value="-1" ${sign===-1?'selected':''}>－</option>
         </select>
-        <div class="timecode-input timecode-sm" style="flex:1">
-          <input type="number" id="off-h2" value="${h}" placeholder="00" min="0">
-          <span class="sep">:</span>
-          <input type="number" id="off-m2" value="${m}" placeholder="00" min="0" max="59">
-          <span class="sep">:</span>
-          <input type="number" id="off-s2" value="${s}" placeholder="00" min="0" max="59">
-        </div>
+        ${timeEntryHtml('off-time2', abs, true)}
       </div>
     </div>
     <button class="btn btn-primary" data-action="save-offset" data-sid="${session.id}">保存</button>
@@ -1337,23 +1323,14 @@ async function beginRecordingSession(targetFid) {
 
   let timecodeStart = 0;
   if (timeBase === 'timecode') {
-    timecodeStart = parseTimecode(
-      document.getElementById('tc-h')?.value,
-      document.getElementById('tc-m')?.value,
-      document.getElementById('tc-s')?.value
-    );
+    timecodeStart = timeEntrySeconds('tc-time') || 0;
   } else if (timeBase === 'realtime') {
     const now = new Date();
     timecodeStart = now.getHours()*3600 + now.getMinutes()*60 + now.getSeconds();
   }
 
   const offSign = parseInt(document.getElementById('offset-sign')?.value) || 1;
-  const offSec  = parseTimecode(
-    document.getElementById('off-h')?.value,
-    document.getElementById('off-m')?.value,
-    document.getElementById('off-s')?.value
-  );
-  const offset = offSign * offSec;
+  const offset = offSign * (timeEntrySeconds('off-time') || 0);
 
   const params = {
     p_folder_id: targetFid,
@@ -1658,18 +1635,13 @@ function handleAction(action, el) {
       const session = getSessionById(ctx.sessionId);
       if (!session) return;
 
-      const h  = document.getElementById('missed-h')?.value || '';
-      const m  = document.getElementById('missed-m')?.value || '';
-      const s  = document.getElementById('missed-s')?.value || '';
-      if (h === '' && m === '' && s === '') { showToast('発生した時間を入力してください'); return; }
-      const startOffset = parseTimecode(h, m, s) - (session.timecodeStart||0) - (session.offset||0);
+      const missedAt = timeEntrySeconds('missed-time');
+      if (missedAt === null) { showToast('発生した時間を入力してください'); return; }
+      const startOffset = missedAt - (session.timecodeStart||0) - (session.offset||0);
       const type = formState.selectedType || 'other';
       const memo = document.getElementById('f-memo')?.value.trim() || '';
 
-      const dh = parseInt(document.getElementById('missed-dur-h')?.value) || 0;
-      const dm = parseInt(document.getElementById('missed-dur-m')?.value) || 0;
-      const ds = parseInt(document.getElementById('missed-dur-s')?.value) || 0;
-      const durSec = dh*3600 + dm*60 + ds;
+      const durSec = timeEntrySeconds('missed-dur') || 0;
 
       const log = {
         id: uid(),
@@ -1789,12 +1761,7 @@ function handleAction(action, el) {
       const session = getSessionById(sid);
       if (!session) return;
       const sign = parseInt(document.getElementById('off-sign')?.value) || 1;
-      const sec  = parseTimecode(
-        document.getElementById('off-h2')?.value,
-        document.getElementById('off-m2')?.value,
-        document.getElementById('off-s2')?.value
-      );
-      session.offset = sign * sec;
+      session.offset = sign * (timeEntrySeconds('off-time2') || 0);
       saveData();
       window.ShotLogAuth.sync.updateSession(session.id, { offset_seconds: session.offset });
       closeSheet();
@@ -2076,16 +2043,8 @@ function buildLogFromForm(type, startOffset, isMissed, session) {
   let duration     = formState.duration;
   let durationMode = formState.durationMode;
 
-  const customMin = document.getElementById('custom-min');
-  const customSec = document.getElementById('custom-sec');
-  if (customMin && customSec) {
-    const mVal = customMin.value.trim();
-    const sVal = customSec.value.trim();
-    if (mVal !== '' || sVal !== '') {
-      const d = (parseInt(mVal)||0)*60 + (parseInt(sVal)||0);
-      if (d > 0) { duration = d; durationMode = 'custom'; }
-    }
-  }
+  const custom = timeEntrySeconds('custom-time');
+  if (custom > 0) { duration = custom; durationMode = 'custom'; }
 
   if (type === 'talk' || type === 'trouble') {
     duration = null; durationMode = 'unknown';
@@ -2131,16 +2090,8 @@ function saveEditedLog() {
 
   let duration     = formState.duration;
   let durationMode = formState.durationMode;
-  const customMin  = document.getElementById('custom-min');
-  const customSec  = document.getElementById('custom-sec');
-  if (customMin && customSec) {
-    const mVal = customMin.value.trim();
-    const sVal = customSec.value.trim();
-    if (mVal !== '' || sVal !== '') {
-      const d = (parseInt(mVal)||0)*60 + (parseInt(sVal)||0);
-      if (d > 0) { duration = d; durationMode = 'custom'; }
-    }
-  }
+  const custom = timeEntrySeconds('custom-time');
+  if (custom > 0) { duration = custom; durationMode = 'custom'; }
   if (log.type === 'talk' || log.type === 'trouble') { duration = null; durationMode = 'unknown'; }
 
   log.duration     = duration;
@@ -2279,15 +2230,8 @@ document.addEventListener('click', e => {
   }
 });
 
-// 時間の欄の順番（分→秒、時→分→秒）
-const TIME_FIELD_NEXT = {
-  'custom-min': 'custom-sec',
-  'tc-h': 'tc-m', 'tc-m': 'tc-s',
-  'off-h': 'off-m', 'off-m': 'off-s',
-  'off-h2': 'off-m2', 'off-m2': 'off-s2',
-  'missed-h': 'missed-m', 'missed-m': 'missed-s',
-  'missed-dur-h': 'missed-dur-m', 'missed-dur-m': 'missed-dur-s',
-};
+const TIME_DIGITS_MS  = 5; // 分:秒の欄の桁数（999:59 まで）
+const TIME_DIGITS_HMS = 6; // 時:分:秒の欄の桁数（99:59:59 まで）
 
 // Custom duration input / ホームの検索
 document.addEventListener('input', e => {
@@ -2298,18 +2242,24 @@ document.addEventListener('input', e => {
     if (list) list.innerHTML = renderHomeList();
     return;
   }
-  // 時間の欄：2桁打ったら次の欄へ移る。消しているときは移らない
-  const nextId = TIME_FIELD_NEXT[id];
-  if (nextId && e.inputType?.startsWith('insert') && e.target.value.length === 2) {
-    const next = document.getElementById(nextId);
-    if (next) { next.focus(); next.select(); }
+  if (e.target.classList.contains('time-entry')) {
+    const hours  = e.target.dataset.hours === '1';
+    const digits = e.target.value.replace(/\D/g, '').replace(/^0+(?=\d)/, '').slice(0, hours ? TIME_DIGITS_HMS : TIME_DIGITS_MS);
+    e.target.value = timeEntryText(digits, hours);
+    e.target.setSelectionRange(e.target.value.length, e.target.value.length);
   }
-  if (id === 'custom-min' || id === 'custom-sec') {
+  if (id === 'custom-time') {
+    // 全部消したら「自動」に戻す
+    if (!e.target.value) { document.querySelector('[data-action="select-auto"]')?.click(); return; }
     formState.durationMode = 'custom';
     document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('selected'));
-    document.getElementById('custom-min')?.classList.add('active');
-    document.getElementById('custom-sec')?.classList.add('active');
+    e.target.classList.add('active');
   }
+});
+
+// 時間の欄を開いたら全選択にする（入っている値は、打った数字で置き換わる）
+document.addEventListener('focusin', e => {
+  if (e.target.classList?.contains('time-entry')) e.target.select();
 });
 
 // Photo input
