@@ -326,7 +326,7 @@ function resumeTimerIfNeeded() {
 function renderGlobalTopBar() {
   return `<div class="header app-topbar">
     <span class="header-title" style="text-align:left;padding-left:8px;display:flex;align-items:center;gap:8px">
-      <img src="icons/favicon-32.png?v=2" alt="" width="24" height="24">SHOT LOG
+      <img src="icons/favicon-32.png?v=4" alt="" width="24" height="24">SHOT LOG
     </span>
     <button class="header-btn" data-action="open-account">${icon('user', 20)}</button>
   </div>`;
