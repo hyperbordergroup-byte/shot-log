@@ -26,6 +26,9 @@
     : null;
 
   const MIGRATION_DONE_KEY = 'shotlog_migrated_v1';
+  const OUTBOX_KEY = 'shotlog_outbox';
+  const BILLING_KEY = 'shotlog_billing';
+  const USER_KEY = 'shotlog_user';
 
   const state = {
     step: isConfigured ? 'loading' : 'unconfigured', // loading | unconfigured | email | code | account
@@ -34,6 +37,8 @@
     message: '',
     session: null,
     billing: null,
+    billingChecked: false, // プラン情報の取得を一度試したか(圏外で失敗しても再試行し続けない)
+    offline: false,        // 直近の送信が通信エラーだったか
   };
 
   function esc(str) {
@@ -46,10 +51,25 @@
   }
 
   // ── セッション初期化 ─────────────────────────────────────
+  // 圏外でトークンを更新できないときも、最後にログインしたユーザーのまま記録を続ける
+  async function readSession() {
+    const { data, error } = await client.auth.getSession();
+    if (data.session) {
+      try { localStorage.setItem(USER_KEY, JSON.stringify({ id: data.session.user.id, email: data.session.user.email })); } catch (e) {}
+      return data.session;
+    }
+    if (error && !error.status) {
+      try {
+        const user = JSON.parse(localStorage.getItem(USER_KEY) || 'null');
+        if (user) return state.session || { user };
+      } catch (e) {}
+    }
+    return null;
+  }
+
   async function refreshSession() {
     if (!client) return;
-    const { data } = await client.auth.getSession();
-    state.session = data.session || null;
+    state.session = await readSession();
     if (state.session) {
       await onLoggedIn();
     } else {
@@ -86,8 +106,10 @@
   // ── ログイン中は、サーバー側のフォルダ・収録・ログを正として
   //    ローカルデータを置き換える(複数端末で同じ内容を見られるように) ──
   async function pullRemoteIntoLocal() {
+    await flushOutbox();
+    if (outbox.length) return; // 未送信が残っている間は、サーバーの内容で上書きしない
     const remote = await pullAll();
-    if (!remote) return;
+    if (!remote || outbox.length) return;
     const ready = await waitForAppReady(5000);
     if (!ready) {
       console.error('[shotlog] pullRemoteIntoLocal: app.js not ready in time');
@@ -95,9 +117,10 @@
     }
     try {
       appData.folders = remote.folders;
-      appData.sessions = remote.sessions;
+      appData.sessions = [...remote.sessions, ...appData.sessions.filter((s) => s.localOnly)];
       saveData();
-      render();
+      // 入力中のシートを閉じて内容を消さないよう、開いている間は描き直さない
+      if (!document.getElementById('bottom-sheet').classList.contains('open')) render();
     } catch (e) {
       console.error('[shotlog] pullRemoteIntoLocal failed', e);
     }
@@ -107,9 +130,9 @@
     if (!client || !state.session) return null;
     const userId = state.session.user.id;
     const [foldersRes, sessionsRes, logsRes] = await Promise.all([
-      client.from('folders').select('id, parent_id, name').eq('user_id', userId),
+      client.from('folders').select('id, parent_id, name, created_at').eq('user_id', userId),
       client.from('sessions')
-        .select('id, folder_id, number, recorded_on, name, time_base, timecode_start, offset_seconds, started_at, ended_at, status')
+        .select('id, folder_id, number, recorded_on, name, time_base, timecode_start, offset_seconds, started_at, ended_at, status, created_at')
         .eq('user_id', userId),
       client.from('shot_logs')
         .select('id, session_id, type, start_offset_seconds, duration_seconds, duration_mode, video_number, filename, memo, trouble_category, trouble_subcategory, photos, is_missed, created_at')
@@ -140,14 +163,16 @@
       });
     });
 
-    const folders = (foldersRes.data || []).map((f) => ({
+    // サーバーの返す順番は決まっていないので、作成順に並べる
+    const byCreated = (a, b) => String(a.created_at || '').localeCompare(String(b.created_at || ''));
+    const folders = [...(foldersRes.data || [])].sort(byCreated).map((f) => ({
       id: f.id,
       parentId: f.parent_id || null,
       name: f.name,
-      createdAt: new Date().toISOString(),
+      createdAt: f.created_at || new Date().toISOString(),
     }));
 
-    const sessions = (sessionsRes.data || []).map((s) => ({
+    const sessions = [...(sessionsRes.data || [])].sort(byCreated).map((s) => ({
       id: s.id,
       folderId: s.folder_id || null,
       number: s.number,
@@ -160,7 +185,7 @@
       endedAt: s.ended_at ? new Date(s.ended_at).getTime() : null,
       status: s.status,
       logs: (logsBySession[s.id] || []).sort((a, b) => a.startOffset - b.startOffset),
-      createdAt: new Date().toISOString(),
+      createdAt: s.created_at || new Date().toISOString(),
     }));
 
     return { folders, sessions };
@@ -178,39 +203,100 @@
     return { data: { id: data.id, name: data.name, parentId: data.parent_id || null }, error: null };
   }
 
-  function updateFolder(id, fields) {
-    if (!client || !state.session) return;
-    client.from('folders').update(fields).eq('id', id).then(({ error }) => {
-      if (error) console.error('[shotlog] updateFolder failed', error);
-    });
-  }
+  // ── 送信待ちの列 ────────────────────────────────────
+  // 変更はまず端末に貯めて、順番にサーバーへ送る。圏外で失敗しても消さず、
+  // つながったら続きから送る。通信エラー以外(権限など)は再送しても通らないので諦めて知らせる。
+  let outbox = [];
+  try { outbox = JSON.parse(localStorage.getItem(OUTBOX_KEY) || '[]'); } catch (e) { outbox = []; }
+  let flushing = false;
 
-  function deleteFolder(id) {
-    if (!client || !state.session) return;
-    client.from('folders').delete().eq('id', id).then(({ error }) => {
-      if (error) console.error('[shotlog] deleteFolder failed', error);
-    });
+  function saveOutbox() {
+    try { localStorage.setItem(OUTBOX_KEY, JSON.stringify(outbox)); } catch (e) { console.error('[shotlog] saveOutbox failed', e); }
   }
-
-  function updateSession(id, fields) {
-    if (!client || !state.session) return;
-    client.from('sessions').update(fields).eq('id', id).then(({ error }) => {
-      if (error) console.error('[shotlog] updateSession failed', error);
-    });
+  function notifySync() {
+    if (typeof updateSyncBadge === 'function') updateSyncBadge();
   }
-
-  function deleteSession(id) {
-    if (!client || !state.session) return;
-    client.from('sessions').delete().eq('id', id).then(({ error }) => {
-      if (error) console.error('[shotlog] deleteSession failed', error);
-    });
+  // Supabaseは通信エラーのとき code が空になる
+  function isNetworkError(error) {
+    return !!error && !error.code;
   }
+  function enqueue(op) {
+    if (!client || !state.session) return;
+    outbox.push(op);
+    saveOutbox();
+    notifySync();
+    flushOutbox();
+  }
+  function runOp(op) {
+    if (op.k === 'update') return client.from(op.table).update(op.fields).eq('id', op.id);
+    if (op.k === 'delete') return client.from(op.table).delete().eq('id', op.id);
+    if (op.k === 'log') return client.from('shot_logs').upsert({ ...op.row, user_id: state.session.user.id });
+    return runStartOp(op);
+  }
+  // 圏外で始めた収録をサーバーに登録する。サーバーの発行したIDへ置き換え、開始時刻は端末の時刻に合わせる
+  async function runStartOp(op) {
+    const { data, error } = await client.rpc('start_recording', op.params);
+    if (error) return { error };
+    remapSessionId(op.tempId, data.id);
+    outbox.forEach((o) => {
+      if (o.id === op.tempId) o.id = data.id;
+      if (o.row && o.row.session_id === op.tempId) o.row.session_id = data.id;
+    });
+    const session = getSessionById(data.id);
+    if (session && session.startedAt) {
+      outbox.splice(1, 0, { k: 'update', table: 'sessions', id: data.id, fields: { started_at: new Date(session.startedAt).toISOString() } });
+    }
+    if (state.billing) {
+      state.billing = { ...state.billing, free_recordings_used: data.free_recordings_used, purchased_recordings_remaining: data.purchased_recordings_remaining };
+    }
+    return { error: null };
+  }
+  // 送れなかった収録はこの端末だけに残す(関連する送信待ちも取り下げる)
+  function dropStartOp(op) {
+    const session = getSessionById(op.tempId);
+    if (session) { session.localOnly = true; delete session.pendingStart; saveData(); }
+    outbox = outbox.filter((o) => o === op || (o.id !== op.tempId && !(o.row && o.row.session_id === op.tempId)));
+    showToast('回数の上限のため、この収録は端末にのみ保存されています');
+  }
+  async function flushOutbox() {
+    if (flushing || !client || !state.session) return;
+    flushing = true;
+    try {
+      while (outbox.length) {
+        const op = outbox[0];
+        const { error } = await runOp(op);
+        if (error && isNetworkError(error)) {
+          state.offline = true;
+          break;
+        }
+        state.offline = false;
+        if (error) {
+          console.error('[shotlog] sync failed', op.k, op.table, error);
+          if (op.k === 'start') dropStartOp(op);
+          else showToast('送信できなかった変更がありました');
+        }
+        outbox.shift();
+        saveOutbox();
+        notifySync();
+      }
+    } finally {
+      flushing = false;
+      notifySync();
+    }
+  }
+  window.addEventListener('online', flushOutbox);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) flushOutbox(); });
+  setInterval(flushOutbox, 15000);
 
+  function updateFolder(id, fields) { enqueue({ k: 'update', table: 'folders', id, fields }); }
+  function deleteFolder(id) { enqueue({ k: 'delete', table: 'folders', id }); }
+  function updateSession(id, fields) { enqueue({ k: 'update', table: 'sessions', id, fields }); }
+  function deleteSession(id) { enqueue({ k: 'delete', table: 'sessions', id }); }
+  function updateLog(id, fields) { enqueue({ k: 'update', table: 'shot_logs', id, fields }); }
+  function deleteLog(id) { enqueue({ k: 'delete', table: 'shot_logs', id }); }
   function insertLog(log, sessionId) {
-    if (!client || !state.session) return;
-    client.from('shot_logs').insert({
+    enqueue({ k: 'log', row: {
       id: log.id,
-      user_id: state.session.user.id,
       session_id: sessionId,
       type: log.type,
       start_offset_seconds: log.startOffset,
@@ -223,24 +309,9 @@
       trouble_subcategory: log.troubleSubcategory || '',
       photos: log.photos || [],
       is_missed: !!log.isMissed,
-    }).then(({ error }) => {
-      if (error) console.error('[shotlog] insertLog failed', error);
-    });
+    } });
   }
-
-  function updateLog(id, fields) {
-    if (!client || !state.session) return;
-    client.from('shot_logs').update(fields).eq('id', id).then(({ error }) => {
-      if (error) console.error('[shotlog] updateLog failed', error);
-    });
-  }
-
-  function deleteLog(id) {
-    if (!client || !state.session) return;
-    client.from('shot_logs').delete().eq('id', id).then(({ error }) => {
-      if (error) console.error('[shotlog] deleteLog failed', error);
-    });
-  }
+  function queueStartRecording(tempId, params) { enqueue({ k: 'start', tempId, params }); }
 
   // ── Stripe Checkoutから戻ってきた直後の後処理 ─────────────────
   function handleCheckoutReturn() {
@@ -325,10 +396,14 @@
       .select('plan, free_recordings_used, purchased_recordings_remaining, subscription_status, current_period_end')
       .eq('user_id', state.session.user.id)
       .maybeSingle();
+    state.billingChecked = true;
     if (error) {
       console.error('[shotlog] loadBillingStatus failed', error);
+      // 圏外では前回のプラン情報を使う
+      try { state.billing = state.billing || JSON.parse(localStorage.getItem(BILLING_KEY) || 'null'); } catch (e) {}
     } else {
       state.billing = data;
+      try { localStorage.setItem(BILLING_KEY, JSON.stringify(data)); } catch (e) {}
     }
   }
 
@@ -368,21 +443,34 @@
       return;
     }
 
-    const { data } = await client.auth.getSession();
-    state.session = data.session || null;
+    state.session = await readSession();
     await onLoggedIn();
     state.busy = false;
     rerender();
   }
 
-  async function logout() {
+  function logout() {
     if (!client) return;
+    if (outbox.length) {
+      showConfirm('未送信の記録があります', `${outbox.length}件の変更がまだ送信されていません。ログアウトすると失われます。`, doLogout, 'ログアウト');
+      return;
+    }
+    doLogout();
+  }
+
+  async function doLogout() {
     await client.auth.signOut();
     state.session = null;
     state.billing = null;
+    state.billingChecked = false;
     state.step = 'email';
     state.email = '';
     state.message = '';
+    outbox = [];
+    saveOutbox();
+    [BILLING_KEY, USER_KEY].forEach((k) => localStorage.removeItem(k));
+    // 共有の端末で次の人に案件名が見えないよう、手元のデータも消す
+    clearLocalData();
     rerender();
   }
 
@@ -484,6 +572,9 @@
       '<span class="list-item-sub">' + planLine + '</span>' +
       '</span></div></div>' +
       '</div>' +
+      (b && b.plan === 'pro'
+        ? '<button class="btn btn-secondary" style="width:100%;margin-bottom:10px" data-action="account-portal">プラン・お支払いの管理(解約はこちら)</button>'
+        : '') +
       '<button class="btn btn-secondary" style="width:100%" data-action="account-logout">ログアウト</button>'
     );
   }
@@ -492,8 +583,7 @@
   // 収録設定画面を開く直前に呼ぶ。未ログインならアカウント画面へ誘導する。
   async function requireLogin(onSuccess) {
     if (!client) { navigate({ view: 'account' }); return; }
-    const { data } = await client.auth.getSession();
-    state.session = data.session || null;
+    state.session = await readSession();
     if (!state.session) {
       navigate({ view: 'account' });
       return;
@@ -547,6 +637,37 @@
     }
   }
 
+  // ── Stripeの顧客ポータル(解約・支払い方法の変更)を開く ───────────
+  async function openBillingPortal() {
+    if (!client || !state.session) return;
+    if (typeof showToast === 'function') showToast('管理ページを準備しています…');
+    try {
+      const { data } = await client.auth.getSession();
+      const res = await fetch(FUNCTIONS_URL + '/create-portal-session', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + data.session.access_token,
+        },
+        body: JSON.stringify({ returnUrl: window.location.href }),
+      });
+      const body = await res.json();
+      if (!res.ok || !body.url) throw new Error(body.error || 'portal failed');
+      window.location.href = body.url;
+    } catch (e) {
+      console.error('[shotlog] portal failed', e);
+      if (typeof showToast === 'function') showToast('管理ページを開けませんでした');
+    }
+  }
+
+  // ── 別の端末から書き出したJSONをサーバーへ取り込む ──────────────
+  async function importSession(session, folderId) {
+    const { error } = await client.rpc('import_session', { p_session: session, p_folder_id: folderId || null });
+    if (error) return { error };
+    await pullRemoteIntoLocal();
+    return { error: null };
+  }
+
   // ── アクション振り分け(app.jsのhandleActionから呼ばれる) ────────
   function handleAction(action) {
     switch (action) {
@@ -561,6 +682,9 @@
         break;
       case 'account-logout':
         logout();
+        break;
+      case 'account-portal':
+        openBillingPortal();
         break;
       case 'checkout-one-time':
         startCheckout('one_time');
@@ -579,6 +703,11 @@
     ensureBillingLoaded: ensureBillingLoaded,
     callStartRecording: callStartRecording,
     isLoggedIn: function () { return !!state.session; },
+    billingChecked: function () { return state.billingChecked; },
+    pendingCount: function () { return outbox.length; },
+    isOffline: function () { return state.offline; },
+    isNetworkError: isNetworkError,
+    importSession: importSession,
     sync: {
       createFolder: createFolder,
       updateFolder: updateFolder,
@@ -588,6 +717,7 @@
       insertLog: insertLog,
       updateLog: updateLog,
       deleteLog: deleteLog,
+      queueStartRecording: queueStartRecording,
     },
   };
 

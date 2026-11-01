@@ -1431,3 +1431,58 @@ input[type=date].form-input {
   .export-preview { max-height: 260px; }
   .dialog { max-width: 420px; border: 1px solid var(--border2); box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55); }
 }
+
+/* 未送信の件数（上のバー） */
+.sync-badge {
+  margin-left: auto;
+  margin-right: 8px;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: var(--text2);
+  background: var(--surface2);
+  white-space: nowrap;
+}
+.sync-badge[hidden] { display: none; }
+
+/* スマホ：一覧の行を長押しして移動 */
+.list-row[data-drag-id] {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.list-row.is-dragging { opacity: 0.4; }
+.list-row.is-drop-over { outline: 2px solid var(--primary); outline-offset: -2px; }
+.drag-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 900;
+  max-width: 240px;
+  padding: 10px 14px;
+  background: var(--surface3);
+  border: 1px solid var(--primary);
+  color: var(--text);
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+.drop-up-zone {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  z-index: 800;
+  padding: calc(14px + var(--safe-top, 0px)) 16px 14px;
+  background: var(--surface2);
+  border-bottom: 1px solid var(--primary);
+  color: var(--text);
+  font-size: 14px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.drop-up-zone.is-drop-over { background: var(--primary); color: #fff; }
+

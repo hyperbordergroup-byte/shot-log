@@ -65,8 +65,29 @@ function loadData() {
   return { version: 2, folders: [], sessions: [] };
 }
 
+// 端末の保存容量を超えても処理を止めない(記録そのものは画面と送信待ちに残る)。
+// 超えたときは写真を除いて保存する。写真は送信済みならサーバーから戻る
 function saveData() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(appData));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(appData));
+  } catch (e) {
+    console.error('[shotlog] saveData failed', e);
+    try {
+      const noPhotos = { ...appData, sessions: appData.sessions.map(s => ({ ...s, logs: s.logs.map(l => ({ ...l, photos: [] })) })) };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(noPhotos));
+    } catch (e2) {
+      console.error('[shotlog] saveData failed without photos', e2);
+    }
+    showToast('端末の保存容量が不足しています。写真はこの端末に残らない場合があります');
+  }
+}
+
+// ログアウト時：手元のデータを消す
+function clearLocalData() {
+  stopTimer();
+  appData = { version: 2, folders: [], sessions: [] };
+  saveData();
+  navStack = [{ view: 'home' }, { view: 'account' }];
 }
 
 // ============================================================
@@ -84,6 +105,7 @@ let timerStartedAt = null;
 let timerBase      = 0;
 
 let formState = {};
+const sessionAlias = {}; // 圏外で始めた収録の仮ID → サーバーのID
 
 // ============================================================
 // UUID
@@ -120,6 +142,12 @@ function parseTimecode(h, m, s) {
   return (parseInt(h)||0)*3600 + (parseInt(m)||0)*60 + (parseInt(s)||0);
 }
 
+// 端末の時刻での今日(toISOString はUTCなので、朝9時前だと前日になる)
+function localToday() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
 function getElapsedSeconds() {
   if (!timerStartedAt) return timerBase;
   return (Date.now() - timerStartedAt) / 1000 + timerBase;
@@ -149,7 +177,7 @@ function esc(str) {
 function getFolder(id)          { return appData.folders.find(f => f.id === id); }
 function getTopLevelFolders()   { return appData.folders.filter(f => !f.parentId); }
 function getChildFolders(pid)   { return appData.folders.filter(f => f.parentId === (pid || null)); }
-function getSessionById(id)     { return appData.sessions.find(s => s.id === id); }
+function getSessionById(id)     { const key = sessionAlias[id] || id; return appData.sessions.find(s => s.id === key); }
 function getSessionsInFolder(fid) { return appData.sessions.filter(s => s.folderId === (fid || null)); }
 function getUnfiledSessions()   { return appData.sessions.filter(s => !s.folderId); }
 
@@ -180,20 +208,57 @@ function getFolderPath(folderId) {
   return path;
 }
 
+// 圏外で始めた収録がサーバーに登録できたら、IDを置き換える(開いている画面は仮IDのままでも引ける)
+function remapSessionId(tempId, newId) {
+  sessionAlias[tempId] = newId;
+  const session = appData.sessions.find(s => s.id === tempId);
+  if (session) { session.id = newId; delete session.pendingStart; saveData(); }
+}
+
 function currentFrame() { return navStack[navStack.length - 1]; }
 
 function nextVideoNumber(session) {
   return session.logs.filter(l => l.type === 'video').length + 1;
 }
 
+// 「自動」の所要時間 = 次の記録まで(最後の記録は収録の終わりまで)。
+// トラブルは本編の途中で起きるもの、入力忘れは後から足すものなので、区切りとして数えない
 function resolveAutoDurations(session) {
   const logs = session.logs;
-  for (let i = 0; i < logs.length - 1; i++) {
-    if (logs[i].durationMode === 'auto' && logs[i].duration == null) {
-      logs[i].duration = logs[i+1].startOffset - logs[i].startOffset;
-      window.ShotLogAuth.sync.updateLog(logs[i].id, { duration_seconds: logs[i].duration });
+  logs.forEach((log, i) => {
+    if (log.durationMode !== 'auto') return;
+    const next = logs.slice(i + 1).find(n => n.type !== 'trouble' && !n.isMissed);
+    let dur = null;
+    if (next) dur = next.startOffset - log.startOffset;
+    else if (session.endedAt && session.startedAt) dur = (session.endedAt - session.startedAt) / 1000 - log.startOffset;
+    if (dur != null) dur = Math.max(0, Math.round(dur));
+    if (log.duration !== dur) {
+      log.duration = dur;
+      window.ShotLogAuth.sync.updateLog(log.id, { duration_seconds: dur });
     }
-  }
+  });
+}
+
+// 動画番号を時間順に振り直す(削除や入力忘れの追加のあと)
+function renumberVideos(session) {
+  let n = 1;
+  session.logs.forEach(l => {
+    if (l.type !== 'video') return;
+    if (l.videoNumber !== n) {
+      l.videoNumber = n;
+      window.ShotLogAuth.sync.updateLog(l.id, { video_number: n });
+    }
+    n++;
+  });
+}
+
+function sessionTitle(session) {
+  return session.name || `第${session.number}回収録`;
+}
+
+// 別の収録が進行中なら、新しく始めずにそちらへ案内する
+function recordingInProgress() {
+  return appData.sessions.find(s => s.status === 'recording');
 }
 
 function sessionSummary(session) {
@@ -328,8 +393,18 @@ function renderGlobalTopBar() {
     <span class="header-title" style="text-align:left;padding-left:8px;display:flex;align-items:center;gap:8px">
       <img src="icons/favicon-32.png?v=4" alt="" width="24" height="24">SHOT LOG
     </span>
+    <span class="sync-badge" id="sync-badge" hidden></span>
     <button class="header-btn" data-action="open-account">${icon('user', 20)}</button>
   </div>`;
+}
+
+// 未送信の変更があるときだけ、上のバーに件数を出す
+function updateSyncBadge() {
+  const el = document.getElementById('sync-badge');
+  if (!el) return;
+  const n = window.ShotLogAuth.pendingCount();
+  el.hidden = n === 0;
+  el.textContent = window.ShotLogAuth.isOffline() ? `未送信 ${n}件（圏外）` : `送信中 ${n}件`;
 }
 
 // ============================================================
@@ -364,6 +439,7 @@ function render() {
     </aside>
     <div class="app-main">${view.header}${view.content}</div>
   </div>`;
+  updateSyncBadge();
 
   if (frame.view === 'recording' && timerInterval) {
     const el = document.getElementById('timer-display');
@@ -400,7 +476,7 @@ function renderSidebarSession(session) {
   return `<button class="sidebar-session-row" data-action="open-session" data-sid="${session.id}"
       draggable="true" data-drag-type="session" data-drag-id="${session.id}">
     <span class="sidebar-session-icon" style="color:${isRec ? 'var(--danger)' : 'var(--text3)'}">${icon(isRec ? 'record' : 'file', 16)}</span>
-    <span class="sidebar-session-name">${esc(session.name || `第${session.number}回収録`)}</span>
+    <span class="sidebar-session-name">${esc(sessionTitle(session))}</span>
   </button>`;
 }
 
@@ -415,7 +491,7 @@ function renderFolderRow(folder) {
     sessionCount > 0 ? `収録 ${sessionCount}回` : '',
   ].filter(Boolean).join('・') || '0件';
 
-  return `<div class="list-row">
+  return `<div class="list-row" data-drag-type="folder" data-drag-id="${folder.id}" data-drop-fid="${folder.id}">
     <button class="list-item" data-action="open-folder" data-fid="${folder.id}">
       <span class="list-item-icon" style="color:var(--text2)">${icon('folder', 22)}</span>
       <span class="list-item-body">
@@ -458,11 +534,11 @@ function renderSidebarFolder(folder, depth = 0, activeFolderId = null) {
 function renderSessionRow(session) {
   const isRec = session.status === 'recording';
   const sum   = sessionSummary(session);
-  return `<div class="list-row">
+  return `<div class="list-row" data-drag-type="session" data-drag-id="${session.id}">
     <button class="list-item" data-action="open-session" data-sid="${session.id}">
       <span class="list-item-icon" style="color:${isRec ? 'var(--danger)' : 'var(--text2)'}">${isRec ? icon('record', 16) : icon('file', 22)}</span>
       <span class="list-item-body">
-        <span class="list-item-title">${esc(session.name || `第${session.number}回収録`)}${isRec ? ' <span style="color:var(--danger);font-size:12px">REC中</span>' : ''}</span>
+        <span class="list-item-title">${esc(sessionTitle(session))}${isRec ? ' <span style="color:var(--danger);font-size:12px">REC中</span>' : ''}</span>
         <span class="list-item-sub">${esc(session.date)}・${session.logs.length}件 動画${sum.videoCount}本</span>
       </span>
       <span class="list-item-chevron">›</span>
@@ -561,12 +637,15 @@ function renderSessionSetup() {
   const { folderId } = currentFrame();
   const sessionsHere = folderId ? getSessionsInFolder(folderId) : getUnfiledSessions();
   const nextNum = sessionsHere.length + 1;
-  const today   = new Date().toISOString().slice(0,10);
+  const today   = localToday();
   const fidAttr = folderId ? `data-fid="${folderId}"` : '';
 
   const billing = window.ShotLogAuth.getBilling();
   let quotaHtml = '';
-  if (!billing) {
+  if (!billing && window.ShotLogAuth.billingChecked()) {
+    // 取得を試して失敗した(圏外など)。描き直すと入力が消えるので、ここでは再試行しない
+    quotaHtml = `<div class="quota-badge">圏外のため残り回数を確認できません</div>`;
+  } else if (!billing) {
     window.ShotLogAuth.ensureBillingLoaded().then(() => {
       if (currentFrame().view === 'session-setup') render();
     });
@@ -702,7 +781,7 @@ function renderRecording() {
 
   return { header: `<div class="header">
       <div class="rec-header-info">
-        <div class="rec-header-name">${esc(folderName)} 第${session.number}回</div>
+        <div class="rec-header-name">${esc(folderName)} ${esc(sessionTitle(session))}</div>
         <div class="rec-header-sub">${esc(session.date)}</div>
       </div>
       <button class="stop-btn" data-action="stop-recording" data-sid="${sessionId}">${icon('stop', 12)} STOP</button>
@@ -795,7 +874,7 @@ function renderSessionReview() {
 
   return { header: `<div class="header">
     <button class="header-btn" data-action="back">‹</button>
-    <span class="header-title">${esc(session.name || `第${session.number}回収録`)}</span>
+    <span class="header-title">${esc(sessionTitle(session))}</span>
     <button class="header-action" data-action="go-export" data-sid="${sessionId}">出力</button>
   </div>`, content: `
   <div class="content">
@@ -838,7 +917,7 @@ function renderSessionReview() {
       </button>
       <button class="btn btn-secondary btn-sm" data-action="edit-offset" data-sid="${sessionId}"
         style="color:var(--text2)">
-        オフセット補正 ${session.offset ? (session.offset>0?'+':'')+formatHMS(Math.abs(session.offset)) : '0:00:00'}
+        オフセット補正 ${session.offset ? (session.offset>0?'+':'-')+formatHMS(Math.abs(session.offset)) : '0:00:00'}
       </button>
     </div>
   </div>` };
@@ -923,6 +1002,24 @@ function sessionFolderName(session) {
   return session.folderId ? (getFolder(session.folderId)?.name || '未分類') : '未分類';
 }
 
+// トラブルの内容（例：音声／ノイズ）
+function troubleDetail(log) {
+  const cat = TROUBLE_CATEGORIES[log.troubleCategory]?.label || '';
+  return [cat, log.troubleSubcategory].filter(Boolean).join('／');
+}
+
+// 書き出す文字：ファイル名とメモの両方
+function logText(log) {
+  return [log.filename, log.memo].filter(Boolean).join(' / ');
+}
+
+function logNote(log) {
+  const notes = [];
+  if (log.isMissed) notes.push('※入力し忘れ');
+  if (log.photos?.length) notes.push(`写真${log.photos.length}枚`);
+  return notes.join(' ');
+}
+
 function generateCSV(session) {
   const header = ['確認','開始','終了','所要時間','項目','メモ','備考'].join(',');
   const rows = session.logs.map(l => {
@@ -931,16 +1028,16 @@ function generateCSV(session) {
     const dur = l.durationMode === 'unknown' ? null
               : (l.durationMode === 'auto' && l.duration == null ? null : l.duration);
     const endSec = dur != null ? startSec + dur : null;
-    const typeLabel = l.type === 'video' ? `動画 ${l.videoNumber}` : t.label;
-    const note = l.isMissed ? '※入力し忘れ' : '';
+    const detail = l.type === 'trouble' ? troubleDetail(l) : '';
+    const typeLabel = l.type === 'video' ? `動画 ${l.videoNumber}` : detail ? `${t.label}（${detail}）` : t.label;
     return [
       '□',
       formatHMS(startSec),
       endSec != null ? formatHMS(endSec) : '—',
       dur != null ? formatDuration(dur) : (l.durationMode === 'unknown' ? '不明' : '—'),
       typeLabel,
-      `"${(l.memo||l.filename||'').replace(/"/g,'""')}"`,
-      note,
+      `"${logText(l).replace(/"/g,'""')}"`,
+      logNote(l),
     ].join(',');
   });
   return [header, ...rows].join('\n');
@@ -950,7 +1047,7 @@ function generateText(session) {
   const folderName = sessionFolderName(session);
   const sum = sessionSummary(session);
   const lines = [
-    `【${folderName} 第${session.number}回収録】 ${session.date}`,
+    `【${folderName} ${sessionTitle(session)}】 ${session.date}`,
     '',
     `総収録時間: ${formatHMS(recordingDuration(session))}`,
     `動画: ${sum.videoCount}本・計${formatDuration(sum.videoDur)}`,
@@ -967,8 +1064,9 @@ function generateText(session) {
     const dur = l.durationMode === 'unknown'                          ? '不明'
               : l.durationMode === 'auto' && l.duration == null       ? '自動'
               : formatDuration(l.duration);
-    const memo = l.memo || l.filename || '';
-    lines.push(`${formatHMS(startSec)} [${typeLabel}] ${dur} ${memo}${l.isMissed?' ※入力し忘れ':''}`);
+    const detail = l.type === 'trouble' ? troubleDetail(l) : '';
+    const body = [detail, logText(l), logNote(l)].filter(Boolean).join(' ');
+    lines.push(`${formatHMS(startSec)} [${typeLabel}] ${dur} ${body}`);
   });
   return lines.join('\n');
 }
@@ -1016,7 +1114,7 @@ function openLogForm(type, session, editLog = null, tapContext = null) {
     type,
     editLog,
     duration:           editLog?.duration          ?? null,
-    durationMode:       editLog?.durationMode       ?? 'unknown',
+    durationMode:       editLog?.durationMode       ?? (type === 'talk' || type === 'trouble' ? 'unknown' : 'auto'),
     memo:               editLog?.memo               ?? '',
     filename:           editLog?.filename           ?? '',
     troubleCategory:    editLog?.troubleCategory    ?? '',
@@ -1087,6 +1185,9 @@ function renderDurationPicker(presets, currentMode, currentDuration) {
     </button>`;
   }).join('');
 
+  const autoBtn = `<button class="preset-btn ${currentMode==='auto'?'selected':''}" data-action="select-auto">
+    自動
+  </button>`;
   const unknownBtn = `<button class="preset-btn unknown ${isUnknown?'selected':''}" data-action="select-unknown">
     不明
   </button>`;
@@ -1095,10 +1196,11 @@ function renderDurationPicker(presets, currentMode, currentDuration) {
   const customSec = isCustom ? currentDuration%60 : '';
 
   return `<div class="form-group">
-    <label class="form-label">所要時間</label>
+    <label class="form-label">所要時間（自動＝次の記録まで）</label>
     <div class="preset-grid" id="preset-grid">
-      ${presetBtns}
+      ${autoBtn}
       ${unknownBtn}
+      ${presetBtns}
     </div>
     <div class="custom-duration" style="margin-top:10px">
       <input type="number" id="custom-min" placeholder="0" min="0" max="999"
@@ -1246,7 +1348,7 @@ function openOffsetEdit(session) {
 // ============================================================
 async function beginRecordingSession(targetFid) {
   const num  = Math.max(1, parseInt(document.getElementById('setup-num')?.value) || 1);
-  const date = document.getElementById('setup-date')?.value || new Date().toISOString().slice(0,10);
+  const date = document.getElementById('setup-date')?.value || localToday();
 
   const timeBaseActive = document.querySelector('#time-base-seg .segment-btn.active');
   const timeBase = timeBaseActive?.dataset.val || 'zero';
@@ -1271,25 +1373,29 @@ async function beginRecordingSession(targetFid) {
   );
   const offset = offSign * offSec;
 
-  let serverSession;
+  const params = {
+    p_folder_id: targetFid,
+    p_number: num,
+    p_recorded_on: date,
+    p_time_base: timeBase,
+    p_timecode_start: timecodeStart,
+    p_offset_seconds: offset,
+  };
+
+  // 圏外でも収録は止めない。端末で始めて、つながったらサーバーに登録する
+  let serverSession = null;
   try {
-    serverSession = await window.ShotLogAuth.callStartRecording({
-      p_folder_id: targetFid,
-      p_number: num,
-      p_recorded_on: date,
-      p_time_base: timeBase,
-      p_timecode_start: timecodeStart,
-      p_offset_seconds: offset,
-    });
+    serverSession = await window.ShotLogAuth.callStartRecording(params);
   } catch (e) {
     console.error('[shotlog] start_recording failed', e);
-    if (currentFrame().view === 'session-setup') render();
-    showToast('収録を開始できませんでした。残り回数をご確認ください');
-    return;
+    if (!window.ShotLogAuth.isNetworkError(e)) {
+      showToast('収録を開始できませんでした。残り回数をご確認ください');
+      return;
+    }
   }
 
   const session = {
-    id: serverSession.id,
+    id: serverSession ? serverSession.id : uid(),
     folderId: targetFid,
     number: num,
     date,
@@ -1303,12 +1409,19 @@ async function beginRecordingSession(targetFid) {
     logs: [],
     createdAt: new Date().toISOString(),
   };
+  if (!serverSession) session.pendingStart = true;
 
   appData.sessions.push(session);
   saveData();
+  // 設定画面は履歴に残さない(STOP後の「戻る」で設定画面に戻らないように)
+  navStack = navStack.filter(f => f.view !== 'session-setup');
   navStack.push({ view: 'recording', sessionId: session.id });
   render();
   startTimer(session);
+  if (!serverSession) {
+    window.ShotLogAuth.sync.queueStartRecording(session.id, params);
+    showToast('圏外のため端末に記録します。つながったら自動で送信します');
+  }
 }
 
 // ============================================================
@@ -1416,19 +1529,26 @@ function handleAction(action, el) {
 
     // ── Start session ────────────────────────────────────────
     case 'new-quick-session':
-      window.ShotLogAuth.requireLogin(() => navigate({ view: 'session-setup', folderId: null }));
+    case 'new-session-in-folder': {
+      const running = recordingInProgress();
+      if (running) {
+        showToast('収録中です。先に STOP してください');
+        navigate({ view: 'recording', sessionId: running.id });
+        break;
+      }
+      const folderId = action === 'new-session-in-folder' ? fid : null;
+      window.ShotLogAuth.requireLogin(() => navigate({ view: 'session-setup', folderId }));
       break;
-
-    case 'new-session-in-folder':
-      window.ShotLogAuth.requireLogin(() => navigate({ view: 'session-setup', folderId: fid }));
-      break;
+    }
 
     case 'start-recording': {
       const targetFid = el.dataset.fid || null;
       const billing = window.ShotLogAuth.getBilling();
 
       if (!billing) {
-        showToast('プラン情報を確認中です。少し待ってから再度お試しください');
+        // 圏外でプラン情報がなくても収録は始められる(回数はつながったときに確認する)
+        if (window.ShotLogAuth.billingChecked()) beginRecordingSession(targetFid);
+        else showToast('プラン情報を確認中です。少し待ってから再度お試しください');
         break;
       }
 
@@ -1460,11 +1580,11 @@ function handleAction(action, el) {
           session.endedAt = Date.now();
           resolveAutoDurations(session);
           saveData();
-          window.ShotLogAuth.sync.updateSession(sid, {
+          window.ShotLogAuth.sync.updateSession(session.id, {
             status: 'completed',
             ended_at: new Date(session.endedAt).toISOString(),
           });
-          navStack[navStack.length-1] = { view: 'session-review', sessionId: sid };
+          navStack[navStack.length-1] = { view: 'session-review', sessionId: session.id };
           render();
         }, '終了する', 'btn-danger'
       );
@@ -1494,9 +1614,11 @@ function handleAction(action, el) {
       if (!log) return;
 
       session.logs.push(log);
+      session.logs.sort((a, b) => a.startOffset - b.startOffset);
+      window.ShotLogAuth.sync.insertLog(log, session.id);
+      renumberVideos(session);
       resolveAutoDurations(session);
       saveData();
-      window.ShotLogAuth.sync.insertLog(log, session.id);
 
       closeSheet();
       const ll = document.getElementById('log-list');
@@ -1504,7 +1626,7 @@ function handleAction(action, el) {
         ll.innerHTML = session.logs.map(l => renderLogRow(l, session)).join('');
         ll.scrollTop = ll.scrollHeight;
       }
-      showToast(`${LOG_TYPES[type].label}を記録しました`);
+      showToast(!navigator.onLine || window.ShotLogAuth.isOffline() ? `${LOG_TYPES[type].label}を端末に記録しました（未送信）` : `${LOG_TYPES[type].label}を記録しました`);
       break;
     }
 
@@ -1526,9 +1648,10 @@ function handleAction(action, el) {
       showConfirm('この記録を削除しますか？', '削除すると元に戻せません。',
         () => {
           session.logs = session.logs.filter(l => l.id !== logId);
+          window.ShotLogAuth.sync.deleteLog(logId);
+          renumberVideos(session);
           resolveAutoDurations(session);
           saveData();
-          window.ShotLogAuth.sync.deleteLog(logId);
           closeSheet();
           render();
         }
@@ -1552,9 +1675,10 @@ function handleAction(action, el) {
       const session = getSessionById(ctx.sessionId);
       if (!session) return;
 
-      const h  = document.getElementById('missed-h')?.value || 0;
-      const m  = document.getElementById('missed-m')?.value || 0;
-      const s  = document.getElementById('missed-s')?.value || 0;
+      const h  = document.getElementById('missed-h')?.value || '';
+      const m  = document.getElementById('missed-m')?.value || '';
+      const s  = document.getElementById('missed-s')?.value || '';
+      if (h === '' && m === '' && s === '') { showToast('発生した時間を入力してください'); return; }
       const startOffset = parseTimecode(h, m, s) - (session.timecodeStart||0) - (session.offset||0);
       const type = formState.selectedType || 'other';
       const memo = document.getElementById('f-memo')?.value.trim() || '';
@@ -1581,16 +1705,11 @@ function handleAction(action, el) {
 
       session.logs.push(log);
       session.logs.sort((a,b) => a.startOffset - b.startOffset);
-      let vn = 1;
-      session.logs.forEach(l => { if (l.type==='video') l.videoNumber = vn++; });
-      saveData();
       window.ShotLogAuth.sync.insertLog(log, session.id);
-      // 挿入位置によって既存の動画番号が振り直された分も同期する
-      session.logs.forEach(l => {
-        if (l.type === 'video' && l.id !== log.id) {
-          window.ShotLogAuth.sync.updateLog(l.id, { video_number: l.videoNumber });
-        }
-      });
+      // 挿入位置によって既存の動画番号が変わる分も同期する
+      renumberVideos(session);
+      resolveAutoDurations(session);
+      saveData();
       closeSheet();
       render();
       showToast('入力し忘れを追加しました');
@@ -1598,24 +1717,14 @@ function handleAction(action, el) {
     }
 
     // ── Duration preset ──────────────────────────────────────
-    case 'select-preset': {
-      const sec = parseInt(el.dataset.sec);
-      formState.durationMode = 'preset';
-      formState.duration = sec;
-      document.querySelectorAll('.preset-btn').forEach(b => {
-        b.classList.toggle('selected', b.dataset.sec == sec && !b.classList.contains('unknown'));
-      });
-      document.querySelectorAll('.custom-duration input').forEach(i => i.classList.remove('active'));
-      break;
-    }
-
+    case 'select-preset':
+    case 'select-auto':
     case 'select-unknown': {
-      formState.durationMode = 'unknown';
-      formState.duration = null;
-      document.querySelectorAll('.preset-btn').forEach(b => {
-        b.classList.toggle('selected', b.classList.contains('unknown'));
-      });
-      document.querySelectorAll('.custom-duration input').forEach(i => i.classList.remove('active'));
+      formState.durationMode = action === 'select-preset' ? 'preset' : action === 'select-auto' ? 'auto' : 'unknown';
+      formState.duration = action === 'select-preset' ? parseInt(el.dataset.sec) : null;
+      document.querySelectorAll('.preset-btn').forEach(b => b.classList.toggle('selected', b === el));
+      // 自由入力の数字が残っていると、保存のときにそちらが優先されてしまう
+      document.querySelectorAll('.custom-duration input').forEach(i => { i.value = ''; i.classList.remove('active'); });
       break;
     }
 
@@ -1704,7 +1813,7 @@ function handleAction(action, el) {
       );
       session.offset = sign * sec;
       saveData();
-      window.ShotLogAuth.sync.updateSession(sid, { offset_seconds: session.offset });
+      window.ShotLogAuth.sync.updateSession(session.id, { offset_seconds: session.offset });
       closeSheet();
       render();
       showToast('オフセットを更新しました');
@@ -1714,7 +1823,7 @@ function handleAction(action, el) {
     // ── Export ───────────────────────────────────────────────
     case 'download-csv': {
       const session = getSessionById(sid);
-      downloadFile(generateCSV(session), `shotlog_${session.date}_${sessionFolderName(session)}.csv`, 'text/csv');
+      downloadFile(generateCSV(session), `shotlog_${session.date}_${sessionFolderName(session)}_${sessionTitle(session)}.csv`, 'text/csv');
       break;
     }
     case 'copy-csv': {
@@ -1723,7 +1832,7 @@ function handleAction(action, el) {
     }
     case 'download-txt': {
       const session = getSessionById(sid);
-      downloadFile(generateText(session), `shotlog_${session.date}_${sessionFolderName(session)}.txt`, 'text/plain');
+      downloadFile(generateText(session), `shotlog_${session.date}_${sessionFolderName(session)}_${sessionTitle(session)}.txt`, 'text/plain');
       break;
     }
     case 'copy-txt': {
@@ -1850,7 +1959,7 @@ function handleAction(action, el) {
       const folder = getFolder(fid);
       if (!folder) return;
       showConfirm(
-        `「${folder.name}」を削除しますか？`,
+        `「${esc(folder.name)}」を削除しますか？`,
         '中のフォルダ・収録データもすべて削除されます。',
         () => {
           const toDelete = new Set([fid, ...getFolderDescendants(fid)]);
@@ -1958,15 +2067,17 @@ function handleAction(action, el) {
       const session = getSessionById(sid);
       if (!session) return;
       showConfirm(
-        `第${session.number}回収録を削除しますか？`,
+        `${esc(sessionTitle(session))}を削除しますか？`,
         'この収録のすべてのログが削除されます。',
         () => {
-          appData.sessions = appData.sessions.filter(s => s.id !== sid);
+          const id = session.id;
+          if (session.status === 'recording') stopTimer();
+          appData.sessions = appData.sessions.filter(s => s.id !== id);
           saveData();
-          window.ShotLogAuth.sync.deleteSession(sid);
-          // goBack()はnavStackが1件(トップ階層)のときは何もしないため、
-          // その場合は明示的にrender()して一覧から即座に消す
-          if (navStack.length > 1) goBack(); else render();
+          window.ShotLogAuth.sync.deleteSession(id);
+          // 削除した収録の画面を開いていなければ、今の一覧に留まる
+          navStack = navStack.filter(f => !(f.sessionId && !getSessionById(f.sessionId)));
+          render();
           showToast('削除しました');
         }
       );
@@ -2051,8 +2162,10 @@ function saveEditedLog() {
 
   log.duration     = duration;
   log.durationMode = durationMode;
-  log.memo         = document.getElementById('f-memo')?.value.trim()      || log.memo;
-  log.filename     = document.getElementById('f-filename')?.value.trim()  || log.filename;
+  const memoEl     = document.getElementById('f-memo');
+  const filenameEl = document.getElementById('f-filename');
+  if (memoEl)     log.memo     = memoEl.value.trim();
+  if (filenameEl) log.filename = filenameEl.value.trim();
   log.troubleCategory = formState.troubleCategory || log.troubleCategory;
   const equipDetail   = document.getElementById('f-equipment-detail');
   log.troubleSubcategory = equipDetail
@@ -2070,6 +2183,8 @@ function saveEditedLog() {
     trouble_subcategory: log.troubleSubcategory,
     photos: log.photos,
   });
+  resolveAutoDurations(session);
+  saveData();
   closeSheet();
   render();
   showToast('変更を保存しました');
@@ -2112,11 +2227,19 @@ function handleImport(data) {
     <button class="btn btn-primary" id="import-confirm-btn">インポート</button>
   `);
 
-  document.getElementById('import-confirm-btn').onclick = () => {
-    const destFid   = document.getElementById('import-dest')?.value || null;
-    const newSession = { ...importSession, id: uid(), folderId: destFid || null };
-    appData.sessions.push(newSession);
-    saveData();
+  document.getElementById('import-confirm-btn').onclick = async () => {
+    const destFid = document.getElementById('import-dest')?.value || null;
+    if (window.ShotLogAuth.isLoggedIn()) {
+      const { error } = await window.ShotLogAuth.importSession(importSession, destFid);
+      if (error) {
+        console.error('[shotlog] import failed', error);
+        showToast('インポートできませんでした。通信状態をご確認ください');
+        return;
+      }
+    } else {
+      appData.sessions.push({ ...importSession, id: uid(), folderId: destFid || null, status: 'completed' });
+      saveData();
+    }
     closeSheet();
     goHome();
     showToast('インポートしました');
@@ -2188,27 +2311,39 @@ document.addEventListener('input', e => {
 document.addEventListener('change', e => {
   if (e.target.id === 'photo-input') {
     const files = Array.from(e.target.files);
-    files.forEach(file => {
-      const reader = new FileReader();
-      reader.onload = ev => {
-        formState.photos = formState.photos || [];
-        formState.photos.push(ev.target.result);
-        const row = document.getElementById('photo-row');
-        if (row) {
-          const div = document.createElement('div');
-          div.style.position = 'relative';
-          const idx = formState.photos.length - 1;
-          div.innerHTML = `<img class="photo-thumb" src="${ev.target.result}" alt="photo">
-            <button data-action="remove-photo" data-index="${idx}"
-              style="position:absolute;top:-6px;right:-6px;background:var(--danger);color:#fff;border:none;border-radius:50%;width:22px;height:22px;font-size:12px;cursor:pointer">×</button>`;
-          const addBtn = row.querySelector('label');
-          row.insertBefore(div, addBtn);
-        }
-      };
-      reader.readAsDataURL(file);
+    files.forEach(async file => {
+      const giveUp = new Promise(resolve => setTimeout(() => resolve(null), 8000));
+      const dataUrl = await Promise.race([shrinkPhoto(file).catch(() => null), giveUp]);
+      if (!dataUrl) { showToast('写真を読み込めませんでした'); return; }
+      formState.photos = formState.photos || [];
+      formState.photos.push(dataUrl);
+      const row = document.getElementById('photo-row');
+      if (row) {
+        const div = document.createElement('div');
+        div.style.position = 'relative';
+        const idx = formState.photos.length - 1;
+        div.innerHTML = `<img class="photo-thumb" src="${dataUrl}" alt="photo">
+          <button data-action="remove-photo" data-index="${idx}"
+            style="position:absolute;top:-6px;right:-6px;background:var(--danger);color:#fff;border:none;border-radius:50%;width:22px;height:22px;font-size:12px;cursor:pointer">×</button>`;
+        const addBtn = row.querySelector('label');
+        row.insertBefore(div, addBtn);
+      }
     });
   }
 });
+
+// スマホの写真は数MBあり端末の保存容量をすぐ超えるので、長辺1600pxのJPEGに縮めてから持つ
+const PHOTO_MAX_SIDE = 1600;
+async function shrinkPhoto(file) {
+  const bitmap = await createImageBitmap(file);
+  const k = Math.min(1, PHOTO_MAX_SIDE / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(bitmap.width * k);
+  canvas.height = Math.round(bitmap.height * k);
+  canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  return canvas.toDataURL('image/jpeg', 0.7);
+}
 
 // Close sheet on overlay tap
 document.getElementById('overlay').addEventListener('click', () => {
@@ -2269,18 +2404,133 @@ document.addEventListener('drop', e => {
   e.preventDefault();
 
   const targetFolderId = folderRow ? folderRow.dataset.dropFid : null;
-
-  if (draggedItem.type === 'folder') {
-    if (targetFolderId === draggedItem.id) { clearDropTarget(); return; }
-    if (targetFolderId && isFolderDescendantOf(targetFolderId, draggedItem.id)) { clearDropTarget(); return; }
-    const folder = getFolder(draggedItem.id);
-    if (folder) { folder.parentId = targetFolderId || null; saveData(); render(); }
-  } else if (draggedItem.type === 'session') {
-    const session = getSessionById(draggedItem.id);
-    if (session) { session.folderId = targetFolderId || null; saveData(); render(); }
-  }
+  moveItem(draggedItem, targetFolderId);
   clearDropTarget();
 });
+
+// フォルダ / 収録を別のフォルダへ移す(PCのドラッグ・スマホのドラッグ共通)
+function moveItem(item, targetFolderId) {
+  const target = targetFolderId || null;
+  if (item.type === 'folder') {
+    const folder = getFolder(item.id);
+    if (!folder || target === item.id || folder.parentId === target) return false;
+    if (target && isFolderDescendantOf(target, item.id)) {
+      showToast('自分自身または子フォルダには移動できません');
+      return false;
+    }
+    folder.parentId = target;
+    window.ShotLogAuth.sync.updateFolder(item.id, { parent_id: target });
+  } else {
+    const session = getSessionById(item.id);
+    if (!session || session.folderId === target) return false;
+    session.folderId = target;
+    window.ShotLogAuth.sync.updateSession(session.id, { folder_id: target });
+  }
+  saveData();
+  render();
+  showToast('移動しました');
+  return true;
+}
+
+// ============================================================
+// スマホ：一覧の行を長押ししてドラッグで移動
+// ============================================================
+const TOUCH_HOLD_MS = 350;   // 長押しと判定する時間
+const TOUCH_SLOP_PX = 10;    // これ以上動いたらスクロールとみなして取り消す
+let touchDrag = null;        // { row, item, x, y, timer, active, ghost, upZone, over }
+
+function touchDragStart(row, x, y) {
+  const title = row.querySelector('.list-item-title')?.textContent.trim() || '';
+  const ghost = document.createElement('div');
+  ghost.className = 'drag-ghost';
+  ghost.textContent = title;
+  document.body.appendChild(ghost);
+  touchDrag.ghost = ghost;
+  touchDrag.active = true;
+  row.classList.add('is-dragging');
+  navigator.vibrate?.(15);
+
+  // フォルダの中で動かしているときは、1つ上へ出す場所を上に表示する
+  const frame = currentFrame();
+  if (frame.view === 'folder') {
+    const parentId = getFolder(frame.folderId)?.parentId || null;
+    const zone = document.createElement('div');
+    zone.className = 'drop-up-zone';
+    zone.dataset.dropFid = parentId || '';
+    zone.textContent = `↑ ${parentId ? getFolder(parentId)?.name : 'ホーム'} へ移動`;
+    document.body.appendChild(zone);
+    touchDrag.upZone = zone;
+  }
+  touchDragMove(x, y);
+}
+
+function touchDragMove(x, y) {
+  const d = touchDrag;
+  d.ghost.style.transform = `translate(${x + 12}px, ${y - 28}px)`;
+  const hit = document.elementFromPoint(x, y);
+  let over = hit?.closest('.drop-up-zone') || hit?.closest('.list-row[data-drop-fid]') || null;
+  if (over && over === d.row) over = null;
+  if (over !== d.over) {
+    d.over?.classList.remove('is-drop-over');
+    over?.classList.add('is-drop-over');
+    d.over = over;
+  }
+  // 画面の端では一覧をスクロールする
+  const list = document.querySelector('.app-main .content');
+  if (list) {
+    const r = list.getBoundingClientRect();
+    if (y < r.top + 48) list.scrollTop -= 8;
+    else if (y > r.bottom - 48) list.scrollTop += 8;
+  }
+}
+
+function touchDragEnd(commit) {
+  const d = touchDrag;
+  touchDrag = null;
+  if (!d) return;
+  clearTimeout(d.timer);
+  if (!d.active) return;
+  d.ghost.remove();
+  d.upZone?.remove();
+  d.row.classList.remove('is-dragging');
+  d.over?.classList.remove('is-drop-over');
+  // 指を離した直後の click で画面が開かないようにする
+  suppressClickUntil = Date.now() + 400;
+  if (commit && d.over) moveItem(d.item, d.over.dataset.dropFid || null);
+}
+
+let suppressClickUntil = 0;
+document.addEventListener('click', e => {
+  if (Date.now() < suppressClickUntil) { e.preventDefault(); e.stopPropagation(); }
+}, true);
+
+document.addEventListener('touchstart', e => {
+  if (e.touches.length !== 1 || touchDrag) return;
+  const row = e.target.closest('.list-row[data-drag-id]');
+  if (!row || e.target.closest('.list-item-opts')) return;
+  const t = e.touches[0];
+  touchDrag = {
+    row, x: t.clientX, y: t.clientY, active: false,
+    item: { type: row.dataset.dragType, id: row.dataset.dragId },
+    timer: setTimeout(() => touchDragStart(row, t.clientX, t.clientY), TOUCH_HOLD_MS),
+  };
+}, { passive: true });
+
+document.addEventListener('touchmove', e => {
+  if (!touchDrag) return;
+  const t = e.touches[0];
+  if (touchDrag.active) {
+    e.preventDefault();  // ドラッグ中は画面をスクロールさせない
+    touchDragMove(t.clientX, t.clientY);
+  } else if (Math.hypot(t.clientX - touchDrag.x, t.clientY - touchDrag.y) > TOUCH_SLOP_PX) {
+    touchDragEnd(false);
+  }
+}, { passive: false });
+
+document.addEventListener('touchend', () => touchDragEnd(true));
+document.addEventListener('touchcancel', () => touchDragEnd(false));
+// 長押しで出る画像・文字のメニューを止める
+document.addEventListener('contextmenu', e => { if (touchDrag) e.preventDefault(); });
 
 // ============================================================
 // SIDEBAR: 幅のドラッグリサイズ
@@ -2307,3 +2557,8 @@ document.addEventListener('mousedown', e => {
 // ============================================================
 resumeTimerIfNeeded();
 render();
+
+// 圏外でもアプリを開けるよう、画面のファイルを端末に保存しておく
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  navigator.serviceWorker.register('sw.js').catch(e => console.error('[shotlog] sw failed', e));
+}
