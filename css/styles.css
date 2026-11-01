@@ -57,6 +57,7 @@ body {
 
 #app {
   height: 100dvh;
+  padding-top: var(--safe-top);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -90,7 +91,6 @@ body {
   padding: 0 4px;
   gap: 4px;
   flex-shrink: 0;
-  padding-top: env(safe-area-inset-top, 0px);
 }
 
 .header-btn {
@@ -142,9 +142,10 @@ body {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
+  padding-bottom: var(--safe-bottom);
 }
 
-.content-pad { padding: 16px; }
+.content-pad { padding: 16px 16px calc(16px + var(--safe-bottom)); }
 
 /* ============================================================
    QUOTA BADGE(残り回数表示・4章)
@@ -616,9 +617,9 @@ textarea.form-input {
     display: flex;
     position: relative;
     flex-shrink: 0;
-    width: var(--sidebar-width, 280px);
+    width: var(--sidebar-width, 33.33vw);
     min-width: 200px;
-    max-width: 480px;
+    max-width: 33.34vw;
     background: var(--surface);
     border-right: 1px solid var(--border);
   }
@@ -1367,7 +1368,7 @@ input[type=date].form-input {
 /* 圏外で未送信があるときの帯（全画面の上） */
 .sync-badge {
   flex: none;
-  padding: calc(5px + var(--safe-top, 0px)) 12px 5px;
+  padding: 5px 12px;
   font-size: 12px;
   font-weight: 600;
   text-align: center;

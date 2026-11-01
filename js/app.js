@@ -99,7 +99,10 @@ let appData = loadData();
 
 let navStack = [{ view: 'home' }];
 let expandedSidebarFolders = new Set();
-let sidebarWidth = parseInt(localStorage.getItem('shotlog_sidebar_width')) || 280;
+// 左の一覧の幅は画面の幅に対する割合で持つ（画面が変わっても比率を保つ）。広げきった状態が初期値
+const SIDEBAR_MAX_RATIO = 1 / 3;
+const SIDEBAR_MIN_PX = 200;
+let sidebarRatio = Math.min(SIDEBAR_MAX_RATIO, parseFloat(localStorage.getItem('shotlog_sidebar_ratio')) || SIDEBAR_MAX_RATIO);
 let draggedItem = null; // { type: 'folder'|'session', id } — ドラッグ中のアイテム
 
 let timerInterval  = null;
@@ -473,7 +476,7 @@ function render() {
   app.dataset.view = frame.view;
   app.innerHTML = `${renderGlobalTopBar()}
   <div class="sync-badge" id="sync-badge" hidden></div>
-  <div class="app-shell" style="--sidebar-width:${sidebarWidth}px">
+  <div class="app-shell" style="--sidebar-width:${sidebarRatio * 100}vw">
     <aside class="app-sidebar">
       <div class="app-sidebar-scroll">${renderAppSidebar(activeFolderId)}</div>
       <div class="app-sidebar-resize" id="sidebar-resize-handle"></div>
@@ -1424,6 +1427,8 @@ function handleAction(action, el) {
       break;
 
     case 'open-folder':
+      // ダブルクリックの2回目で同じ画面を履歴に重ねない
+      if (currentFrame().view === 'folder' && currentFrame().folderId === fid) break;
       navigate({ view: 'folder', folderId: fid });
       break;
 
@@ -2216,6 +2221,15 @@ document.addEventListener('click', e => {
   handleAction(el.dataset.action, el);
 });
 
+// 左の一覧：フォルダをダブルクリックすると、中のフォルダを開閉する
+document.addEventListener('dblclick', e => {
+  const fid = e.target.closest('.sidebar-folder-open')?.dataset.fid;
+  if (!fid || getChildFolders(fid).length === 0) return;
+  if (expandedSidebarFolders.has(fid)) expandedSidebarFolders.delete(fid);
+  else expandedSidebarFolders.add(fid);
+  render();
+});
+
 // Segment buttons (time base)
 document.addEventListener('click', e => {
   const btn = e.target.closest('.segment-btn');
@@ -2492,14 +2506,14 @@ document.addEventListener('mousedown', e => {
   if (!e.target.closest('#sidebar-resize-handle')) return;
   e.preventDefault();
   const onMove = me => {
-    sidebarWidth = Math.min(480, Math.max(200, me.clientX));
+    sidebarRatio = Math.min(SIDEBAR_MAX_RATIO, Math.max(SIDEBAR_MIN_PX, me.clientX) / innerWidth);
     const sidebar = document.querySelector('.app-sidebar');
-    if (sidebar) sidebar.style.setProperty('--sidebar-width', `${sidebarWidth}px`);
+    if (sidebar) sidebar.style.setProperty('--sidebar-width', `${sidebarRatio * 100}vw`);
   };
   const onUp = () => {
     document.removeEventListener('mousemove', onMove);
     document.removeEventListener('mouseup', onUp);
-    localStorage.setItem('shotlog_sidebar_width', String(sidebarWidth));
+    localStorage.setItem('shotlog_sidebar_ratio', String(sidebarRatio));
   };
   document.addEventListener('mousemove', onMove);
   document.addEventListener('mouseup', onUp);
