@@ -320,8 +320,38 @@ function recordingDuration(session) {
 // NAVIGATION
 // ============================================================
 function navigate(frame) { navStack.push(frame); render(); }
-function goBack()        { if (navStack.length > 1) { navStack.pop(); render(); } }
-function goHome()        { navStack = [{ view: 'home' }]; render(); }
+function goBack() {
+  if (navStack.length <= 1) return;
+  const left = navStack.pop();
+  // 右で戻ったら、左の一覧のそのフォルダも閉じる
+  if (left.view === 'folder') expandedSidebarFolders.delete(left.folderId);
+  render();
+}
+function goHome() { navStack = [{ view: 'home' }]; expandedSidebarFolders.clear(); render(); }
+
+// ━━ 左の一覧の開閉と、右の画面を連動させる ━━
+let lastFolderOpen = { fid: null, at: 0, wasOpen: false };  // ダブルクリックの1回目で開いた直後かを見分ける
+
+function openFolder(fid) {
+  lastFolderOpen = { fid, at: Date.now(), wasOpen: expandedSidebarFolders.has(fid) };
+  getFolderPath(fid).forEach(f => expandedSidebarFolders.add(f.id));
+  const cur = currentFrame();
+  if (cur.view === 'folder' && cur.folderId === fid) render();
+  else navigate({ view: 'folder', folderId: fid });
+}
+
+// 閉じたら、右に出ていたそのフォルダ（または中のフォルダ）から1つ上へ戻る
+function closeFolder(fid) {
+  const closed = new Set([fid, ...getFolderDescendants(fid)]);
+  closed.forEach(id => expandedSidebarFolders.delete(id));
+  const cur = currentFrame();
+  if (cur.view === 'folder' && closed.has(cur.folderId)) {
+    const parentId = getFolder(fid)?.parentId || null;
+    navStack = navStack.filter(f => !(f.view === 'folder' && closed.has(f.folderId)));
+    if (parentId && currentFrame().folderId !== parentId) navStack.push({ view: 'folder', folderId: parentId });
+  }
+  render();
+}
 
 // ============================================================
 // TOAST
@@ -527,6 +557,9 @@ function renderSidebarSession(session) {
 // ============================================================
 // SHARED ROW RENDERERS
 // ============================================================
+// マウスのある端末だけ、一覧の行をドラッグできるようにする（スマホは長押しの方式を使う）
+const MOUSE_DRAG = window.matchMedia('(hover: hover) and (pointer: fine)').matches ? 'draggable="true"' : '';
+
 function renderFolderRow(folder) {
   const childCount   = getChildFolders(folder.id).length;
   const sessionCount = getSessionsInFolder(folder.id).length;
@@ -535,7 +568,7 @@ function renderFolderRow(folder) {
     sessionCount > 0 ? `収録 ${sessionCount}回` : '',
   ].filter(Boolean).join('・') || '0件';
 
-  return `<div class="list-row" data-drag-type="folder" data-drag-id="${folder.id}" data-drop-fid="${folder.id}">
+  return `<div class="list-row" ${MOUSE_DRAG} data-drag-type="folder" data-drag-id="${folder.id}" data-drop-fid="${folder.id}">
     <button class="list-item" data-action="open-folder" data-fid="${folder.id}">
       <span class="list-item-icon" style="color:var(--text2)">${icon('folder', 22)}</span>
       <span class="list-item-body">
@@ -578,7 +611,7 @@ function renderSidebarFolder(folder, depth = 0, activeFolderId = null) {
 function renderSessionRow(session) {
   const isRec = session.status === 'recording';
   const sum   = sessionSummary(session);
-  return `<div class="list-row" data-drag-type="session" data-drag-id="${session.id}">
+  return `<div class="list-row" ${MOUSE_DRAG} data-drag-type="session" data-drag-id="${session.id}">
     <button class="list-item" data-action="open-session" data-sid="${session.id}">
       <span class="list-item-icon" style="color:${isRec ? 'var(--danger)' : 'var(--text2)'}">${isRec ? icon('record', 16) : icon('file', 22)}</span>
       <span class="list-item-body">
@@ -1428,19 +1461,17 @@ function handleAction(action, el) {
       navigate({ view: 'account' });
       break;
 
-    case 'open-folder':
-      // ダブルクリックの2回目で同じ画面を履歴に重ねない
-      if (currentFrame().view === 'folder' && currentFrame().folderId === fid) break;
-      navigate({ view: 'folder', folderId: fid });
+    case 'open-folder': {
+      // ダブルクリックの2回目で、開き直しの記録を上書きしない
+      const cur = currentFrame();
+      if (cur.view === 'folder' && cur.folderId === fid) break;
+      openFolder(fid);
       break;
+    }
 
     case 'toggle-sidebar-folder':
-      if (expandedSidebarFolders.has(fid)) {
-        expandedSidebarFolders.delete(fid);
-      } else {
-        expandedSidebarFolders.add(fid);
-      }
-      render();
+      if (expandedSidebarFolders.has(fid)) closeFolder(fid);
+      else openFolder(fid);
       break;
 
     case 'open-session': {
@@ -2223,13 +2254,15 @@ document.addEventListener('click', e => {
   handleAction(el.dataset.action, el);
 });
 
-// 左の一覧：フォルダをダブルクリックすると、中のフォルダを開閉する
+// 左の一覧：フォルダをダブルクリックすると開閉する。
+// 1回目のクリックで開いた直後なら、開いたままにする（閉じていたものを開く操作なので）
 document.addEventListener('dblclick', e => {
   const fid = e.target.closest('.sidebar-folder-open')?.dataset.fid;
-  if (!fid || getChildFolders(fid).length === 0) return;
-  if (expandedSidebarFolders.has(fid)) expandedSidebarFolders.delete(fid);
-  else expandedSidebarFolders.add(fid);
-  render();
+  if (!fid) return;
+  const justOpened = lastFolderOpen.fid === fid && !lastFolderOpen.wasOpen && Date.now() - lastFolderOpen.at < 600;
+  if (justOpened) return;
+  if (expandedSidebarFolders.has(fid)) closeFolder(fid);
+  else openFolder(fid);
 });
 
 // Segment buttons (time base)
@@ -2346,7 +2379,7 @@ document.addEventListener('dragend', e => {
 
 document.addEventListener('dragover', e => {
   if (!draggedItem) return;
-  const folderRow = e.target.closest('.sidebar-folder-row');
+  const folderRow = e.target.closest('.sidebar-folder-row, .list-row[data-drop-fid]');
   const rootZone  = e.target.closest('.app-sidebar-drop-root');
   if (!folderRow && !rootZone) return;
 
@@ -2359,7 +2392,7 @@ document.addEventListener('dragover', e => {
 });
 
 document.addEventListener('dragleave', e => {
-  const folderRow = e.target.closest('.sidebar-folder-row');
+  const folderRow = e.target.closest('.sidebar-folder-row, .list-row[data-drop-fid]');
   if (folderRow && folderRow === dropTargetEl && !folderRow.contains(e.relatedTarget)) {
     clearDropTarget();
   }
@@ -2367,7 +2400,7 @@ document.addEventListener('dragleave', e => {
 
 document.addEventListener('drop', e => {
   if (!draggedItem) return;
-  const folderRow = e.target.closest('.sidebar-folder-row');
+  const folderRow = e.target.closest('.sidebar-folder-row, .list-row[data-drop-fid]');
   const rootZone  = e.target.closest('.app-sidebar-drop-root');
   if (!folderRow && !rootZone) return;
   e.preventDefault();

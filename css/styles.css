@@ -805,11 +805,13 @@ textarea.form-input {
 /* ============================================================
    RECORDING SCREEN
    ============================================================ */
+/* 下の余白（ホームバーの部分）は、上の余白と同じ背景色を見せる */
 .recording-screen {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  padding-bottom: var(--safe-bottom);
 }
 
 .timer-area {
@@ -917,7 +919,6 @@ textarea.form-input {
   background: var(--border);
   border-top: 1px solid var(--border);
   flex-shrink: 0;
-  padding-bottom: var(--safe-bottom);
 }
 
 .rec-btn {
@@ -1252,12 +1253,34 @@ input[type=date].form-input {
     padding-right: 20px;
   }
 
-  .content.content-pad {
-    width: 100%;
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 32px 40px;
+  /* 内容の幅は最大960pxで中央に寄せる（広い画面で間延びさせない） */
+  .app-main .content,
+  .app-main .log-list {
+    padding-left: max(24px, calc((100% - 960px) / 2));
+    padding-right: max(24px, calc((100% - 960px) / 2));
   }
+  .app-main .content { padding-top: 20px; padding-bottom: 32px; }
+  .app-main .header { padding-left: max(24px, calc((100% - 960px) / 2)); padding-right: max(24px, calc((100% - 960px) / 2)); }
+  .app-main .home-main-actions,
+  .app-main .section-label,
+  .app-main .review-actions { padding-left: 0; padding-right: 0; }
+  .app-main .home-main-actions { padding-top: 0; }
+  .app-main .list-group,
+  .app-main .search-box,
+  .app-main .summary-card { margin-left: 0; margin-right: 0; }
+
+  /* 出力は2列で並べる */
+  .content-pad:has(.export-card) {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    align-content: start;
+  }
+  .export-card { margin-bottom: 0; }
+  .export-card:last-child { grid-column: 1 / -1; }
+
+  /* 収録中は左の一覧を押せないようにする（本番中の誤操作を防ぐ） */
+  #app[data-view="recording"] .app-sidebar { opacity: 0.4; pointer-events: none; }
 
   .content-pad:has(.setup-section) {
     display: grid;
@@ -1280,26 +1303,8 @@ input[type=date].form-input {
   .content-pad:has(.setup-section) > .quota-badge,
   .content-pad:has(.setup-section) > div:last-child { grid-column: 1 / -1; }
 
-  .content-pad:has(.setup-section) > div:last-child {
-    width: 100%;
-    max-width: none;
-    margin: 4px 0 32px !important;
-  }
-
-  .content-pad:has(.setup-section) > div:last-child .btn-rec {
-    width: 100%;
-  }
-
-  .content-pad > .quota-badge {
-    max-width: 680px;
-    margin: 0 auto 22px;
-  }
-
-  .content-pad:not(:has(.export-card)) > div:last-child {
-    max-width: 680px;
-    margin-left: auto !important;
-    margin-right: auto !important;
-  }
+  .content-pad:has(.setup-section) > div:last-child { margin: 4px 0 0 !important; }
+  .content-pad > .quota-badge { margin: 0; }
 
   .bottom-sheet {
     left: 50%;
@@ -1325,18 +1330,13 @@ input[type=date].form-input {
     padding: 20px 24px;
   }
 
-  .recording-screen .log-list {
-    width: 100%;
-    max-width: 1200px;
-    margin: 0 auto;
-  }
 
 
   .recording-screen .rec-buttons {
     grid-template-columns: repeat(7, 1fr);
-    max-width: 1200px;
-    width: 100%;
-    margin: 0 auto;
+    max-width: 960px;
+    width: calc(100% - 48px);
+    margin: 0 auto 20px;
     border: 1px solid var(--border);
     padding-bottom: 0;
   }
@@ -1354,28 +1354,10 @@ input[type=date].form-input {
     border-top: none;
   }
 
-  .content:has(.summary-card) {
-    padding: 12px 40px 0;
-  }
-
-  .summary-card {
-    max-width: 1200px;
-    margin: 28px auto 12px;
-  }
-
+  .summary-card { margin-top: 0; }
   .summary-grid { grid-template-columns: repeat(6, 1fr); }
-  .content:has(.summary-card) > .section-label,
-  .content:has(.summary-card) > .list-group,
-  .content:has(.summary-card) > .review-actions {
-    max-width: 1200px;
-    margin-left: auto;
-    margin-right: auto;
-  }
 
-  .content:has(.summary-card) > .section-label,
-  .content:has(.summary-card) > .review-actions { padding-left: 0; padding-right: 0; }
-
-  .export-preview { max-height: 260px; }
+  .export-preview { max-height: 220px; }
   .dialog { max-width: 420px; border: 1px solid var(--border2); box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55); }
 }
 
