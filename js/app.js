@@ -782,6 +782,7 @@ function renderQuotaBlocked() {
       ここまで良ければPro加入がお得になるタイミングです。
     </p>
     <button class="btn btn-primary" style="width:100%" data-action="checkout-subscription">Proに登録して使い放題（¥1,078/月）</button>
+    ${window.ShotLogAuth.legalLinks()}
   </div>` };
 }
 
@@ -800,6 +801,7 @@ function renderFolderQuotaBlocked() {
       複数の案件フォルダを管理するには、Proへの登録が必要です。
     </p>
     <button class="btn btn-primary" style="width:100%" data-action="checkout-subscription">Proに登録して使い放題（¥1,078/月）</button>
+    ${window.ShotLogAuth.legalLinks()}
   </div>` };
 }
 
@@ -2505,18 +2507,29 @@ document.addEventListener('contextmenu', e => { if (touchDrag) e.preventDefault(
 document.addEventListener('mousedown', e => {
   if (!e.target.closest('#sidebar-resize-handle')) return;
   e.preventDefault();
+  const handle = e.target.closest('#sidebar-resize-handle');
+  handle.classList.add('is-active');
   const onMove = me => {
     sidebarRatio = Math.min(SIDEBAR_MAX_RATIO, Math.max(SIDEBAR_MIN_PX, me.clientX) / innerWidth);
     const sidebar = document.querySelector('.app-sidebar');
     if (sidebar) sidebar.style.setProperty('--sidebar-width', `${sidebarRatio * 100}vw`);
   };
   const onUp = () => {
+    handle.classList.remove('is-active');
     document.removeEventListener('mousemove', onMove);
     document.removeEventListener('mouseup', onUp);
     localStorage.setItem('shotlog_sidebar_ratio', String(sidebarRatio));
   };
   document.addEventListener('mousemove', onMove);
   document.addEventListener('mouseup', onUp);
+});
+
+// ハンドルをダブルクリック：広げきった状態（初期の幅）に戻す
+document.addEventListener('dblclick', e => {
+  if (!e.target.closest('#sidebar-resize-handle')) return;
+  sidebarRatio = SIDEBAR_MAX_RATIO;
+  localStorage.removeItem('shotlog_sidebar_ratio');
+  document.querySelector('.app-sidebar')?.style.setProperty('--sidebar-width', `${sidebarRatio * 100}vw`);
 });
 
 // ============================================================

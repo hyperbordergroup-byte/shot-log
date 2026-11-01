@@ -512,8 +512,20 @@
         '<span class="header-title">アカウント</span>' +
         '<span style="width:44px"></span>' +
         '</div>',
-      content: '<div class="content" style="padding:20px 16px">' + inner + '</div>',
+      content: '<div class="content" style="padding:20px 16px">' + inner + legalLinks() + '</div>',
     };
+  }
+
+  // 利用規約などは製品サイトのページへ
+  function legalLinks() {
+    const base = 'https://hyperborder.jp/products/legal/';
+    return (
+      '<div class="legal-links">' +
+      '<a href="' + base + 'terms" target="_blank" rel="noopener">利用規約</a>' +
+      '<a href="' + base + 'privacy" target="_blank" rel="noopener">プライバシーポリシー</a>' +
+      '<a href="' + base + 'tokushoho" target="_blank" rel="noopener">特定商取引法に基づく表記</a>' +
+      '</div>'
+    );
   }
 
   function renderEmailForm() {
@@ -708,6 +720,7 @@
     isOffline: function () { return state.offline; },
     isNetworkError: isNetworkError,
     importSession: importSession,
+    legalLinks: legalLinks,
     sync: {
       createFolder: createFolder,
       updateFolder: updateFolder,

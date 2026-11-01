@@ -631,14 +631,28 @@ textarea.form-input {
     padding: 20px 12px;
   }
 
+  /* 左の一覧の幅を変えるハンドル（中央につまみの線3本） */
   .app-sidebar-resize {
     position: absolute;
-    top: 0; right: -3px;
-    width: 6px; height: 100%;
+    top: 0; right: -4px;
+    width: 8px; height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--border);
+    color: var(--text3);
     cursor: col-resize;
     z-index: 1;
   }
-  .app-sidebar-resize:hover { background: var(--primary); opacity: 0.3; }
+  .app-sidebar-resize::after {
+    content: '';
+    width: 1px;
+    height: 28px;
+    background: currentColor;
+    box-shadow: -2px 0 0 currentColor, 2px 0 0 currentColor;
+  }
+  .app-sidebar-resize:hover,
+  .app-sidebar-resize.is-active { background: var(--primary); color: var(--on-primary); }
 
   .app-main {
     display: flex;
@@ -1376,6 +1390,17 @@ input[type=date].form-input {
   background: var(--warning);
 }
 .sync-badge[hidden] { display: none; }
+
+/* 利用規約などのリンク */
+.legal-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 16px;
+  margin-top: 28px;
+  font-size: 12px;
+}
+.legal-links a { color: var(--text3); }
 
 /* スマホ：一覧の行を長押しして移動 */
 .list-row[data-drag-id] {
