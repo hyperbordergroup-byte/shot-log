@@ -1432,15 +1432,15 @@ input[type=date].form-input {
   .dialog { max-width: 420px; border: 1px solid var(--border2); box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55); }
 }
 
-/* 未送信の件数（上のバー） */
+/* 圏外で未送信があるときの帯（全画面の上） */
 .sync-badge {
-  margin-left: auto;
-  margin-right: 8px;
-  padding: 3px 8px;
-  font-size: 11px;
-  color: var(--text2);
-  background: var(--surface2);
-  white-space: nowrap;
+  flex: none;
+  padding: calc(5px + var(--safe-top, 0px)) 12px 5px;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  color: #111111;
+  background: #FFB000;
 }
 .sync-badge[hidden] { display: none; }
 

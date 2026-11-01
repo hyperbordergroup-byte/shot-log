@@ -393,18 +393,19 @@ function renderGlobalTopBar() {
     <span class="header-title" style="text-align:left;padding-left:8px;display:flex;align-items:center;gap:8px">
       <img src="icons/favicon-32.png?v=4" alt="" width="24" height="24">SHOT LOG
     </span>
-    <span class="sync-badge" id="sync-badge" hidden></span>
     <button class="header-btn" data-action="open-account">${icon('user', 20)}</button>
   </div>`;
 }
 
-// 未送信の変更があるときだけ、上のバーに件数を出す
+// 圏外で未送信の変更があるときだけ、画面の上に帯で件数を出す。
+// 上のバーはスマホのホーム以外で隠れるので、バーとは別にして収録中でも見えるようにする。
+// 通信できているときは記録のたびに帯が出入りして画面が動くので出さない
 function updateSyncBadge() {
   const el = document.getElementById('sync-badge');
   if (!el) return;
   const n = window.ShotLogAuth.pendingCount();
-  el.hidden = n === 0;
-  el.textContent = window.ShotLogAuth.isOffline() ? `未送信 ${n}件（圏外）` : `送信中 ${n}件`;
+  el.hidden = !(n > 0 && window.ShotLogAuth.isOffline());
+  el.textContent = `圏外：未送信 ${n}件（つながると自動で送信します）`;
 }
 
 // ============================================================
@@ -432,6 +433,7 @@ function render() {
   const activeFolderId = frame.view === 'folder' ? frame.folderId : null;
   app.dataset.view = frame.view;
   app.innerHTML = `${renderGlobalTopBar()}
+  <div class="sync-badge" id="sync-badge" hidden></div>
   <div class="app-shell" style="--sidebar-width:${sidebarWidth}px">
     <aside class="app-sidebar">
       <div class="app-sidebar-scroll">${renderAppSidebar(activeFolderId)}</div>
