@@ -528,7 +528,7 @@
       '</button>' +
       '<p style="font-size:12px;color:var(--text3);margin-top:14px;line-height:1.6">' +
       'パスワードは不要です。メールに届く数字を入力するとログインできます。</p>' +
-      (state.message ? '<p style="font-size:12px;color:var(--danger);margin-top:10px">' + esc(state.message) + '</p>' : '')
+      (state.message ? '<p style="font-size:12px;color:var(--delete);margin-top:10px">' + esc(state.message) + '</p>' : '')
     );
   }
 
@@ -544,7 +544,7 @@
       '<button class="btn btn-primary" style="width:100%" data-action="account-verify-code" ' + (state.busy ? 'disabled' : '') + '>' +
       (state.busy ? '確認中…' : 'ログイン') +
       '</button>' +
-      (state.message ? '<p style="font-size:12px;color:var(--danger);margin-top:10px">' + esc(state.message) + '</p>' : '') +
+      (state.message ? '<p style="font-size:12px;color:var(--delete);margin-top:10px">' + esc(state.message) + '</p>' : '') +
       '<div style="display:flex;gap:20px;margin-top:16px">' +
       '<button data-action="account-back-to-email" style="font-size:13px;color:var(--text3);background:none;border:none;padding:0">アドレスを変える</button>' +
       '<button data-action="account-send-code" style="font-size:13px;color:var(--primary);background:none;border:none;padding:0">コードを再送する</button>' +
